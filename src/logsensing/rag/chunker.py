@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -14,7 +15,7 @@ class Chunk:
     text: str  # chunk content
     source: str  # source file path or identifier
     chunk_index: int  # position within the document
-    metadata: dict = field(default_factory=dict)  # extra metadata
+    metadata: dict[str, Any] = field(default_factory=dict)  # extra metadata
 
 
 class DocumentChunker:
@@ -24,12 +25,18 @@ class DocumentChunker:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
-    def chunk_text(self, text: str, source: str = "unknown") -> list[Chunk]:
+    def chunk_text(
+        self,
+        text: str,
+        source: str = "unknown",
+        metadata: dict[str, Any] | None = None,
+    ) -> list[Chunk]:
         """Split text into overlapping chunks by character count."""
         if not text.strip():
             return []
 
         chunks: list[Chunk] = []
+        base_metadata = dict(metadata or {})
         step = max(self.chunk_size - self.chunk_overlap, 1)
         start = 0
         idx = 0
@@ -44,6 +51,7 @@ class DocumentChunker:
                         text=segment,
                         source=source,
                         chunk_index=idx,
+                        metadata=dict(base_metadata),
                     )
                 )
                 idx += 1
@@ -51,16 +59,27 @@ class DocumentChunker:
 
         return chunks
 
-    def chunk_file(self, path: Path) -> list[Chunk]:
+    def chunk_file(
+        self,
+        path: Path,
+        metadata: dict[str, Any] | None = None,
+    ) -> list[Chunk]:
         """Read and chunk a text file (markdown, txt, etc.)."""
         text = path.read_text(encoding="utf-8")
-        return self.chunk_text(text, source=str(path))
+        return self.chunk_text(text, source=str(path), metadata=metadata)
 
-    def chunk_files(self, paths: list[Path]) -> list[Chunk]:
+    def chunk_files(
+        self,
+        paths: list[Path],
+        metadata_by_path: dict[str, dict[str, Any]] | None = None,
+    ) -> list[Chunk]:
         """Chunk multiple files."""
         chunks: list[Chunk] = []
         for p in paths:
-            chunks.extend(self.chunk_file(p))
+            metadata = None
+            if metadata_by_path is not None:
+                metadata = metadata_by_path.get(str(p.resolve())) or metadata_by_path.get(str(p))
+            chunks.extend(self.chunk_file(p, metadata=metadata))
         return chunks
 
     def chunk_log_lines(

@@ -67,10 +67,58 @@ logsensing train baseline normal.log --output baseline.json
 logsensing train drain device.log --output drain_state.json
 
 # AI 自動根因分析（需 agent 依賴 + API key）
-logsensing agent analyze anomalies.json --baseline baseline.json
+logsensing agent analyze --anomalies anomalies.json --baseline baseline.json
 
 # 互動式問答
 logsensing agent chat --anomalies anomalies.json
+```
+
+### Agent + RAG 用法
+
+```bash
+# 直接從文件建立知識庫並交給 Agent 使用
+logsensing agent analyze \
+  --anomalies anomalies.json \
+  --logfile device.log \
+  --knowledge-doc docs/spec.md \
+  --knowledge-doc README.md
+
+# 使用平台自動偵測，將本次分析經驗回寫到該平台 RAG
+logsensing agent analyze \
+  --anomalies anomalies.json \
+  --logfile device.log \
+  --platform auto
+
+# 建立索引後重複使用（同平台會自動讀回既有 experiences）
+logsensing agent chat \
+  --logfile next-device.log \
+  --platform auto
+
+# 若要手動指定 index，也建議依平台分目錄
+logsensing agent chat \
+  --logfile next-device.log \
+  --platform bdk \
+  --bm25-index .cache/logsensing/rag/bdk/bm25.json \
+  --faiss-index .cache/logsensing/rag/bdk/faiss
+```
+
+- `--knowledge-doc` 可重複指定；若有設定 `rag.platform_docs`，會與該平台文件一起納入
+- `agent analyze` 在提供 `--logfile` 且可判定平台時，會把本次 RCA 的**結構化摘要**自動寫回平台 RAG
+- 預設 store 位置為 `.cache/logsensing/rag/<platform>/`
+- 下一次同平台分析時，會自動把該平台累積的 `experiences/` 納入檢索
+- `--bm25-index` / `--faiss-index` 若已存在會直接載入；不存在則會從文件與歷史 experience 建立後落盤
+- 若未安裝向量檢索相依，會自動降級為 **BM25-only**；安裝完整 RAG 相依請執行 `uv sync --extra rag`
+
+```toml
+# config.toml
+[rag]
+index_root = ".cache/logsensing/rag"
+auto_writeback = true
+knowledge_docs = ["docs/spec.md"]
+
+[rag.platform_docs]
+bdk = ["docs/bdk-troubleshooting.md"]
+prplos = ["docs/prplos-notes.md"]
 ```
 
 ### 支援平台
@@ -115,9 +163,10 @@ logsensing/
 │   └── rag/              # RAG 知識庫
 │       ├── chunker.py    #   文件切塊器
 │       ├── bm25.py       #   BM25 精準匹配索引
+│       ├── memory.py     #   平台經驗回寫與 store 管理
 │       ├── vector.py     #   FAISS 向量檢索索引
 │       └── retriever.py  #   混合檢索 API（RRF 融合）
-├── tests/                # 測試（143 tests）
+├── tests/                # pytest / playbook 測試
 ├── docs/                 # 文件
 └── samples/              # 測試用日誌樣本
 ```

@@ -18,6 +18,27 @@
 | LLM 整合 | Function Calling（模型可抽換） |
 | 檢索引擎 | BM25 + FAISS（進階里程碑） |
 
+## 目前進度（2026-03-31）
+
+- [x] Phase 1 Parser：Boot cycle 切割、Drain3 模板探勘、Demux 分流
+- [x] Phase 2 Analyzer：Baseline、Anomaly Detector、OTel Exporter、Boot timing report
+- [x] 多平台抽象：BDK / prplOS profile、自動偵測、sequence-only timing 分析
+- [x] Phase 3 Agent：`agent analyze` / `agent chat` 已可讀 anomaly、baseline、drain state、原始 log
+- [x] Sprint 4 RAG 核心：chunker / BM25 / FAISS / RRF hybrid retriever
+- [x] RAG CLI 整合：`agent analyze` / `agent chat` 已可從 `--knowledge-doc` 或 config 建立/載入索引
+- [x] 平台感知 RAG 記憶：依 log 自動判斷平台、載入同平台 docs/experiences、分析後自動回寫結構化經驗
+- [x] 測試現況：189 tests passing，ruff clean
+
+### RAG 整合策略
+
+- CLI 優先讀取既有索引：`--bm25-index` / `--faiss-index`
+- 若索引不存在且提供 `--knowledge-doc`（或 config `rag.knowledge_docs`），則現場切塊並建立索引
+- 向量相依不存在時，自動降級為 BM25-only，保持 agent 功能可用
+- `agent analyze` 與 `agent chat` 共用同一組 RAG helper，避免行為漂移
+- 預設以 `.cache/logsensing/rag/<platform>/` 隔離不同平台索引與經驗，避免混庫
+- `agent analyze` 只回寫結構化 RCA/證據摘要，不保存完整 raw log 或整段對話
+- 回寫後會 deterministic rebuild 該平台索引，讓下次同平台分析能直接檢索既有經驗
+
 ## 樣本日誌分析
 
 **檔案：** `docs/sample_logs/20260318_ATT_newHW7-normal_1354.log`（7MB, 113,105 行）
@@ -119,23 +140,23 @@ Raw Log ──▶ [Phase 1: Parser] ──▶ [Phase 2: Analyzer] ──▶ [Pha
 
 **目標：** 建立命令列介面，透過 Function Calling 串接 LLM API 產出 RCA 報告。
 
-- [ ] Typer CLI 封裝（parse / analyze / agent 子命令）
-- [ ] LLM Agent：讀取 anomalies.json 自動撰寫 RCA 摘要
-- [ ] Interactive Q&A：終端機互動式問答介面
-- [ ] 組態管理（config.toml / 環境變數）
-- [ ] 端到端測試
+- [x] Typer CLI 封裝（parse / analyze / agent 子命令）
+- [x] LLM Agent：讀取 anomalies.json 自動撰寫 RCA 摘要
+- [x] Interactive Q&A：終端機互動式問答介面
+- [x] 組態管理（config.toml / 環境變數）
+- [x] 端到端測試
 
 **交付物：** `agent_cli.py` + 自動化 RCA 摘要報告
 
-### Sprint 4：混合 RAG 知識庫 ⚠️ 進階里程碑
+### Sprint 4：混合 RAG 知識庫
 
 **目標：** 硬體規格書語意切塊，建立雙軌檢索引擎強化 Agent 領域知識。
 
-- [ ] 文件切塊器（PDF / Markdown → chunks）
-- [ ] BM25 精準匹配索引
-- [ ] FAISS 向量語意檢索
-- [ ] 混合檢索 API（融合排序）
-- [ ] Agent 知識庫整合
+- [x] 文件切塊器（Markdown / Text → chunks）
+- [x] BM25 精準匹配索引
+- [x] FAISS 向量語意檢索
+- [x] 混合檢索 API（融合排序）
+- [x] Agent 知識庫整合
 
 **交付物：** 向量資料庫建置 + 混合檢索 API
 

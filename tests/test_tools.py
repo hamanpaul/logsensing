@@ -245,3 +245,29 @@ class TestSearchKnowledgeBase:
         data = json.loads(raw)
         assert "error" in data
         assert "not configured" in data["error"].lower()
+
+    def test_search_knowledge_base_with_metadata(self) -> None:
+        """Returns source_type/platform when retriever has chunk metadata."""
+        from logsensing.rag.bm25 import SearchResult
+        from logsensing.rag.chunker import Chunk
+
+        class FakeRetriever:
+            def search(self, query: str, top_k: int = 5) -> list[SearchResult]:
+                return [
+                    SearchResult(
+                        chunk=Chunk(
+                            chunk_id="exp-1",
+                            text="Kernel panic likely linked to RPC tunnel timeout.",
+                            source="experience.md",
+                            chunk_index=0,
+                            metadata={"source_type": "experience", "platform": "bdk"},
+                        ),
+                        score=0.91,
+                    )
+                ]
+
+        tk = AgentToolkit(retriever=FakeRetriever())
+        raw = tk.search_knowledge_base(query="kernel panic")
+        data = json.loads(raw)
+        assert data["results"][0]["source_type"] == "experience"
+        assert data["results"][0]["platform"] == "bdk"
