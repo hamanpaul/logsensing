@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 from rich.console import Console
@@ -11,6 +11,13 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from logsensing.config import AppConfig
+
+if TYPE_CHECKING:
+    from logsensing.parser.drain import DrainParser
+    from logsensing.parser.splitter import StreamSplitter
+    from logsensing.platform.base import PlatformProfile
+    from logsensing.rag.chunker import Chunk
+    from logsensing.rag.retriever import HybridRetriever
 
 app = typer.Typer(name="logsensing", help="系統日誌自動化分析與 AI 診斷工具", no_args_is_help=True)
 console = Console()
@@ -41,7 +48,7 @@ def _resolve_platform(
     platform_name: str | None,
     logfile: Path | None = None,
     cfg: AppConfig | None = None,
-):
+) -> PlatformProfile:
     """解析平台 profile."""
     from logsensing.platform.registry import resolve_platform
 
@@ -51,7 +58,11 @@ def _resolve_platform(
     return resolve_platform(name, logfile)
 
 
-def _build_splitter(cfg: AppConfig, anchors: list[str] | None = None, platform=None):
+def _build_splitter(
+    cfg: AppConfig,
+    anchors: list[str] | None = None,
+    platform: PlatformProfile | None = None,
+) -> StreamSplitter:
     """建立 StreamSplitter."""
     from logsensing.parser.splitter import StreamSplitter
 
@@ -65,7 +76,7 @@ def _build_splitter(cfg: AppConfig, anchors: list[str] | None = None, platform=N
     )
 
 
-def _build_drain(cfg: AppConfig):
+def _build_drain(cfg: AppConfig) -> DrainParser:
     """建立 DrainParser."""
     from logsensing.parser.drain import DrainParser
 
@@ -84,6 +95,297 @@ def _validate_logfile(logfile: Path) -> None:
         raise typer.Exit(code=1)
 
 
+def _resolve_rag_platform(
+    cfg: AppConfig,
+    platform_name: str | None,
+    logfile: Path | None,
+) -> PlatformProfile | None:
+    """Resolve platform for RAG when enough context is available."""
+    effective_name = platform_name or cfg.platform
+    if logfile is not None and logfile.exists():
+        return _resolve_platform(effective_name, logfile, cfg)
+    if effective_name and effective_name != "auto":
+        return _resolve_platform(effective_name, None, cfg)
+    return None
+
+
+def _resolve_knowledge_docs(
+    cfg: AppConfig,
+    knowledge_docs: list[Path] | None,
+    *,
+    platform_name: str | None = None,
+) -> list[Path]:
+    """解析知識庫文件路徑."""
+    raw_docs = [Path(p) for p in cfg.rag.knowledge_docs]
+    if platform_name:
+        raw_docs.extend(Path(p) for p in cfg.rag.platform_docs.get(platform_name, []))
+    if knowledge_docs:
+        raw_docs.extend(knowledge_docs)
+    resolved_docs: list[Path] = []
+    seen: set[str] = set()
+
+    for doc in raw_docs:
+        doc_path = doc.expanduser()
+        if not doc_path.exists():
+            console.print(f"[red]錯誤: 知識庫文件 {doc_path} 不存在[/red]")
+            raise typer.Exit(code=1)
+        if not doc_path.is_file():
+            console.print(f"[red]錯誤: 知識庫路徑 {doc_path} 不是檔案[/red]")
+            raise typer.Exit(code=1)
+
+        resolved = doc_path.resolve()
+        resolved_key = str(resolved)
+        if resolved_key not in seen:
+            resolved_docs.append(resolved)
+            seen.add(resolved_key)
+
+    return resolved_docs
+
+
+def _resolve_rag_index_path(cli_path: Path | None, config_value: str) -> Path | None:
+    """解析 RAG 索引路徑，CLI 優先於 config."""
+    if cli_path is not None:
+        return cli_path.expanduser()
+    if config_value:
+        return Path(config_value).expanduser()
+    return None
+
+
+def _chunk_knowledge_docs(
+    cfg: AppConfig,
+    doc_paths: list[Path],
+    *,
+    platform_name: str | None = None,
+    experience_paths: list[Path] | None = None,
+) -> list[Chunk]:
+    """將知識庫文件切塊."""
+    from logsensing.rag.chunker import DocumentChunker
+
+    chunker = DocumentChunker(
+        chunk_size=cfg.rag.chunk_size,
+        chunk_overlap=cfg.rag.chunk_overlap,
+    )
+    chunks = []
+    experience_keys = {
+        str(path.resolve()) for path in (experience_paths or []) if path.exists()
+    }
+    for doc_path in doc_paths:
+        resolved_key = str(doc_path.resolve())
+        source_type = "experience" if resolved_key in experience_keys else "doc"
+        chunks.extend(
+            chunker.chunk_file(
+                doc_path,
+                metadata={
+                    "platform": platform_name or "",
+                    "source_type": source_type,
+                },
+            )
+        )
+    return chunks
+
+
+def _build_rag_retriever(
+    cfg: AppConfig,
+    platform_name: str | None = None,
+    knowledge_docs: list[Path] | None = None,
+    bm25_index: Path | None = None,
+    faiss_index: Path | None = None,
+    *,
+    force_rebuild: bool = False,
+) -> HybridRetriever | None:
+    """建立或載入 HybridRetriever."""
+    from logsensing.rag import (
+        BM25Index,
+        HybridRetriever,
+        get_platform_rag_store,
+        list_experience_docs,
+    )
+
+    store = None
+    experience_docs: list[Path] = []
+    if platform_name:
+        store = get_platform_rag_store(Path(cfg.rag.index_root), platform_name)
+        experience_docs = list_experience_docs(store)
+
+    doc_paths = _resolve_knowledge_docs(cfg, knowledge_docs, platform_name=platform_name)
+    source_paths: list[Path] = []
+    seen_paths: set[str] = set()
+    for path in [*doc_paths, *experience_docs]:
+        resolved_key = str(path.resolve())
+        if resolved_key not in seen_paths:
+            source_paths.append(path)
+            seen_paths.add(resolved_key)
+
+    bm25_path = _resolve_rag_index_path(bm25_index, cfg.rag.bm25_index_path)
+    if bm25_path is None and store is not None:
+        bm25_path = store.bm25_index_path
+    faiss_path = _resolve_rag_index_path(faiss_index, cfg.rag.faiss_index_path)
+    if faiss_path is None and store is not None:
+        faiss_path = store.faiss_index_path
+
+    has_existing_index = (
+        (bm25_path is not None and bm25_path.exists())
+        or (faiss_path is not None and faiss_path.exists())
+    )
+    if not source_paths and not has_existing_index:
+        return None
+
+    bm25 = None
+    vector = None
+
+    if not force_rebuild and bm25_path is not None and bm25_path.exists():
+        try:
+            bm25 = BM25Index()
+            bm25.load(bm25_path)
+            console.print(f"[dim]已載入 BM25 索引: {bm25_path}[/dim]")
+        except ImportError as exc:
+            console.print("[red]RAG 相依未安裝，請執行: uv sync --extra rag[/red]")
+            raise typer.Exit(code=1) from exc
+
+    if not force_rebuild and faiss_path is not None and faiss_path.exists():
+        from logsensing.rag.vector import VectorIndex
+
+        candidate = VectorIndex()
+        if candidate.is_available:
+            candidate.load(faiss_path)
+            vector = candidate
+            console.print(f"[dim]已載入 FAISS 索引: {faiss_path}[/dim]")
+        else:
+            console.print(
+                "[yellow]向量檢索相依未安裝，略過 FAISS 載入。"
+                "安裝方式: uv sync --extra rag[/yellow]"
+            )
+
+    if source_paths and (force_rebuild or bm25 is None or vector is None):
+        chunks = _chunk_knowledge_docs(
+            cfg,
+            source_paths,
+            platform_name=platform_name,
+            experience_paths=experience_docs,
+        )
+        if not chunks:
+            console.print("[yellow]知識庫文件未產生任何 chunks，略過 RAG[/yellow]")
+        else:
+            console.print(
+                f"[dim]RAG 讀入 {len(source_paths)} 個來源，切成 {len(chunks)} 個 chunks[/dim]"
+            )
+            if force_rebuild or bm25 is None:
+                try:
+                    bm25 = BM25Index()
+                    bm25.build(chunks)
+                except ImportError as exc:
+                    console.print("[red]RAG 相依未安裝，請執行: uv sync --extra rag[/red]")
+                    raise typer.Exit(code=1) from exc
+                if bm25_path is not None:
+                    bm25_path.parent.mkdir(parents=True, exist_ok=True)
+                    bm25.save(bm25_path)
+                    console.print(f"[dim]已儲存 BM25 索引: {bm25_path}[/dim]")
+
+            if force_rebuild or vector is None:
+                from logsensing.rag.vector import VectorIndex
+
+                candidate = VectorIndex()
+                if candidate.is_available:
+                    candidate.build(chunks)
+                    vector = candidate
+                    if faiss_path is not None:
+                        candidate.save(faiss_path)
+                        console.print(f"[dim]已儲存 FAISS 索引: {faiss_path}[/dim]")
+                else:
+                    console.print(
+                        "[yellow]向量檢索相依未安裝，RAG 降級為 BM25-only。"
+                        "安裝方式: uv sync --extra rag[/yellow]"
+                    )
+
+    if bm25 is None and vector is None:
+        return None
+
+    backends = []
+    if bm25 is not None:
+        backends.append("BM25")
+    if vector is not None:
+        backends.append("Vector")
+    console.print(f"[green]✓ RAG 知識庫已啟用 ({' + '.join(backends)})[/green]")
+    return HybridRetriever(bm25=bm25, vector=vector)
+
+
+def _load_cycle_log_lines(
+    cfg: AppConfig,
+    logfile: Path | None,
+    platform_name: str | None = None,
+) -> dict[int, list[str]]:
+    """讀取並切割 cycle log lines."""
+    if logfile is None or not logfile.exists():
+        return {}
+
+    plat = _resolve_platform(platform_name, logfile, cfg)
+    splitter = _build_splitter(cfg, platform=plat)
+    with open(logfile, encoding=cfg.parser.encoding, errors="replace") as fh:
+        cycles = list(splitter.split(fh))
+
+    log_lines: dict[int, list[str]] = {}
+    for cycle in cycles:
+        log_lines[cycle.cycle_id] = list(splitter.read_cycle_lines(logfile, cycle))
+    return log_lines
+
+
+def _write_platform_experience(
+    cfg: AppConfig,
+    *,
+    platform_name: str | None,
+    logfile: Path | None,
+    anomalies_data: dict[str, Any],
+    drain_data: dict[str, Any],
+    analysis_text: str,
+    generated_by: str,
+    model_name: str | None = None,
+    knowledge_docs: list[Path] | None = None,
+    bm25_index: Path | None = None,
+    faiss_index: Path | None = None,
+) -> None:
+    """Persist one analysis result into the platform's RAG memory store."""
+    if not cfg.rag.auto_writeback:
+        return
+    if platform_name is None:
+        console.print("[dim]無法判定平台，略過經驗回寫[/dim]")
+        return
+    if logfile is None or not logfile.exists():
+        console.print("[dim]未提供原始 log，略過經驗回寫[/dim]")
+        return
+
+    from logsensing.rag import (
+        build_experience_artifact,
+        get_platform_rag_store,
+        write_experience_artifact,
+    )
+
+    store = get_platform_rag_store(Path(cfg.rag.index_root), platform_name)
+    device_model = anomalies_data.get("resource", {}).get("device.model", "unknown")
+    artifact = build_experience_artifact(
+        platform=platform_name,
+        device_model=device_model,
+        logfile=logfile,
+        anomalies_data=anomalies_data,
+        drain_state=drain_data,
+        analysis_text=analysis_text,
+        generated_by=generated_by,
+        model_name=model_name,
+    )
+    md_path, created = write_experience_artifact(store, artifact)
+    if created:
+        console.print(f"[dim]已寫入平台經驗: {md_path}[/dim]")
+        _build_rag_retriever(
+            cfg,
+            platform_name=platform_name,
+            knowledge_docs=knowledge_docs,
+            bm25_index=bm25_index,
+            faiss_index=faiss_index,
+            force_rebuild=True,
+        )
+    else:
+        console.print(f"[dim]平台經驗已存在，略過回寫: {md_path.name}[/dim]")
+
+
 # ---------------------------------------------------------------------------
 # Type aliases for Typer Annotated
 # ---------------------------------------------------------------------------
@@ -93,6 +395,18 @@ ConfigOpt = Annotated[Path | None, typer.Option("--config", "-c", help="TOML 組
 PlatformOpt = Annotated[
     str | None,
     typer.Option("--platform", "-p", help="平台 (auto/bdk/prplos)"),
+]
+KnowledgeDocsOpt = Annotated[
+    list[Path] | None,
+    typer.Option("--knowledge-doc", help="知識庫文件路徑，可重複指定"),
+]
+Bm25IndexOpt = Annotated[
+    Path | None,
+    typer.Option("--bm25-index", help="BM25 索引 JSON 路徑"),
+]
+FaissIndexOpt = Annotated[
+    Path | None,
+    typer.Option("--faiss-index", help="FAISS 索引目錄路徑"),
 ]
 
 
@@ -200,7 +514,7 @@ def analyze(
     if output is None:
         output = Path("anomalies.json")
 
-    all_anomalies: list = []
+    all_anomalies: list[Any] = []
 
     with Progress(
         SpinnerColumn(), TextColumn("[progress.description]{task.description}")
@@ -491,7 +805,8 @@ def train_drain(
 
 _SYSTEM_PROMPT = (
     "你是 LogSensing 的日誌分析 AI 助手。你可以使用工具查詢異常事件、日誌、"
-    "Drain3 模板與基準線。請根據查詢結果提供根因分析與建議。回覆使用繁體中文。"
+    "Drain3 模板、基準線與文件知識庫。請根據查詢結果提供根因分析與建議。"
+    "回覆使用繁體中文。"
 )
 
 
@@ -513,18 +828,22 @@ def agent_analyze(
     model: Annotated[str, typer.Option("--model", help="LLM 模型名稱")] = "gpt-4o",
     api_base: Annotated[str | None, typer.Option("--api-base", help="API 端點")] = None,
     config: ConfigOpt = None,
+    platform: PlatformOpt = None,
+    knowledge_docs: KnowledgeDocsOpt = None,
+    bm25_index: Bm25IndexOpt = None,
+    faiss_index: FaissIndexOpt = None,
 ) -> None:
     """使用 AI Agent 分析異常，產出 RCA 報告."""
     import json as _json
 
     cfg = _load_config(config)
+    rag_platform = _resolve_rag_platform(cfg, platform, logfile)
+    rag_platform_name = rag_platform.name if rag_platform is not None else None
 
     # Load data files
-    anomalies_data: dict = {}
-    baseline_data: dict = {}
-    drain_data: dict = {}
-    log_lines: dict[int, list[str]] = {}
-
+    anomalies_data: dict[str, Any] = {}
+    baseline_data: dict[str, Any] = {}
+    drain_data: dict[str, Any] = {}
     if anomalies and anomalies.exists():
         anomalies_data = _json.loads(anomalies.read_text(encoding="utf-8"))
     else:
@@ -538,12 +857,7 @@ def agent_analyze(
     if drain_state and drain_state.exists():
         drain_data = _json.loads(drain_state.read_text(encoding="utf-8"))
 
-    if logfile and logfile.exists():
-        splitter = _build_splitter(cfg)
-        with open(logfile, encoding=cfg.parser.encoding, errors="replace") as fh:
-            cycles = list(splitter.split(fh))
-        for c in cycles:
-            log_lines[c.cycle_id] = list(splitter.read_cycle_lines(logfile, c))
+    log_lines = _load_cycle_log_lines(cfg, logfile, rag_platform_name or platform)
 
     if not anomalies_data.get("traces"):
         console.print("[yellow]未找到異常資料，請先執行 logsensing analyze[/yellow]")
@@ -562,18 +876,26 @@ def agent_analyze(
             temperature=cfg.agent.temperature,
             max_tokens=cfg.agent.max_tokens,
         )
+        retriever = _build_rag_retriever(
+            cfg,
+            platform_name=rag_platform_name,
+            knowledge_docs=knowledge_docs,
+            bm25_index=bm25_index,
+            faiss_index=faiss_index,
+        )
         toolkit = AgentToolkit(
             anomalies_data=anomalies_data,
             baseline_data=baseline_data,
             drain_state=drain_data,
             log_lines=log_lines,
+            retriever=retriever,
         )
         toolkit.register_all(client)
 
         cycle_hint = f" (Cycle #{cycle})" if cycle else ""
         user_msg = (
             f"請分析以下系統的異常事件{cycle_hint}，產出完整的根因分析 (RCA) 報告。"
-            "請使用工具取得異常清單、相關日誌與基準線，然後提供分析結果。"
+            "請使用工具取得異常清單、相關日誌與基準線；若需要平台/規格背景，也請搜尋知識庫。"
         )
 
         with console.status("[bold green]AI Agent 分析中 …"):
@@ -585,6 +907,19 @@ def agent_analyze(
         from rich.markdown import Markdown
 
         console.print(Markdown(result))
+        _write_platform_experience(
+            cfg,
+            platform_name=rag_platform_name,
+            logfile=logfile,
+            anomalies_data=anomalies_data,
+            drain_data=drain_data,
+            analysis_text=result,
+            generated_by="llm",
+            model_name=client.model,
+            knowledge_docs=knowledge_docs,
+            bm25_index=bm25_index,
+            faiss_index=faiss_index,
+        )
 
     except ImportError:
         # Fall back to rule-based RCA
@@ -603,6 +938,18 @@ def agent_analyze(
         from rich.markdown import Markdown
 
         console.print(Markdown(md))
+        _write_platform_experience(
+            cfg,
+            platform_name=rag_platform_name,
+            logfile=logfile,
+            anomalies_data=anomalies_data,
+            drain_data=drain_data,
+            analysis_text=md,
+            generated_by="rule-based",
+            knowledge_docs=knowledge_docs,
+            bm25_index=bm25_index,
+            faiss_index=faiss_index,
+        )
 
 
 @agent_app.command("chat")
@@ -622,29 +969,28 @@ def agent_chat(
     model: Annotated[str, typer.Option("--model", help="LLM 模型名稱")] = "gpt-4o",
     api_base: Annotated[str | None, typer.Option("--api-base", help="API 端點")] = None,
     config: ConfigOpt = None,
+    platform: PlatformOpt = None,
+    knowledge_docs: KnowledgeDocsOpt = None,
+    bm25_index: Bm25IndexOpt = None,
+    faiss_index: FaissIndexOpt = None,
 ) -> None:
     """與 AI Agent 對話，互動式分析日誌."""
     import json as _json
 
     cfg = _load_config(config)
+    rag_platform = _resolve_rag_platform(cfg, platform, logfile)
+    rag_platform_name = rag_platform.name if rag_platform is not None else None
 
-    anomalies_data: dict = {}
-    baseline_data: dict = {}
-    drain_data: dict = {}
-    log_lines: dict[int, list[str]] = {}
-
+    anomalies_data: dict[str, Any] = {}
+    baseline_data: dict[str, Any] = {}
+    drain_data: dict[str, Any] = {}
     if anomalies and anomalies.exists():
         anomalies_data = _json.loads(anomalies.read_text(encoding="utf-8"))
     if baseline and baseline.exists():
         baseline_data = _json.loads(baseline.read_text(encoding="utf-8"))
     if drain_state and drain_state.exists():
         drain_data = _json.loads(drain_state.read_text(encoding="utf-8"))
-    if logfile and logfile.exists():
-        splitter = _build_splitter(cfg)
-        with open(logfile, encoding=cfg.parser.encoding, errors="replace") as fh:
-            cycles = list(splitter.split(fh))
-        for c in cycles:
-            log_lines[c.cycle_id] = list(splitter.read_cycle_lines(logfile, c))
+    log_lines = _load_cycle_log_lines(cfg, logfile, rag_platform_name or platform)
 
     # Try LLM chat
     try:
@@ -659,11 +1005,19 @@ def agent_chat(
             temperature=cfg.agent.temperature,
             max_tokens=cfg.agent.max_tokens,
         )
+        retriever = _build_rag_retriever(
+            cfg,
+            platform_name=rag_platform_name,
+            knowledge_docs=knowledge_docs,
+            bm25_index=bm25_index,
+            faiss_index=faiss_index,
+        )
         toolkit = AgentToolkit(
             anomalies_data=anomalies_data,
             baseline_data=baseline_data,
             drain_state=drain_data,
             log_lines=log_lines,
+            retriever=retriever,
         )
         toolkit.register_all(client)
 
@@ -671,7 +1025,8 @@ def agent_chat(
         from rich.prompt import Prompt
 
         console.print("[bold green]LogSensing AI Chat[/bold green]")
-        console.print(f"[dim]模型: {client.model} | 輸入 'quit' 離開[/dim]\n")
+        rag_status = "on" if retriever is not None else "off"
+        console.print(f"[dim]模型: {client.model} | RAG: {rag_status} | 輸入 'quit' 離開[/dim]\n")
 
         history: list[dict[str, str]] = []
         while True:

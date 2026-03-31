@@ -67,11 +67,77 @@ logsensing train baseline normal.log --output baseline.json
 logsensing train drain device.log --output drain_state.json
 
 # AI 自動根因分析（需 agent 依賴 + API key）
-logsensing agent analyze anomalies.json --baseline baseline.json
+logsensing agent analyze --anomalies anomalies.json --baseline baseline.json
 
 # 互動式問答
 logsensing agent chat --anomalies anomalies.json
 ```
+
+### Agent + RAG 用法
+
+```bash
+# 直接從文件建立知識庫並交給 Agent 使用
+logsensing agent analyze \
+  --anomalies anomalies.json \
+  --logfile device.log \
+  --knowledge-doc docs/spec.md \
+  --knowledge-doc README.md
+
+# 使用平台自動偵測，將本次分析經驗回寫到該平台 RAG
+logsensing agent analyze \
+  --anomalies anomalies.json \
+  --logfile device.log \
+  --platform auto
+
+# 建立索引後重複使用（同平台會自動讀回既有 experiences）
+logsensing agent chat \
+  --logfile next-device.log \
+  --platform auto
+
+# 若要手動指定 index，也建議依平台分目錄
+logsensing agent chat \
+  --logfile next-device.log \
+  --platform bdk \
+  --bm25-index .cache/logsensing/rag/bdk/bm25.json \
+  --faiss-index .cache/logsensing/rag/bdk/faiss
+```
+
+- `--knowledge-doc` 可重複指定；若有設定 `rag.platform_docs`，會與該平台文件一起納入
+- `agent analyze` 在提供 `--logfile` 且可判定平台時，會把本次 RCA 的**結構化摘要**自動寫回平台 RAG
+- 預設 store 位置為 `.cache/logsensing/rag/<platform>/`
+- 下一次同平台分析時，會自動把該平台累積的 `experiences/` 納入檢索
+- `--bm25-index` / `--faiss-index` 若已存在會直接載入；不存在則會從文件與歷史 experience 建立後落盤
+- 若未安裝向量檢索相依，會自動降級為 **BM25-only**；安裝完整 RAG 相依請執行 `uv sync --extra rag`
+
+```toml
+# config.toml
+[rag]
+index_root = ".cache/logsensing/rag"
+auto_writeback = true
+knowledge_docs = ["docs/spec.md"]
+
+[rag.platform_docs]
+bdk = ["docs/bdk-troubleshooting.md"]
+prplos = ["docs/prplos-notes.md"]
+```
+
+### Serialwrap reboot powercycle script
+
+```bash
+# 跑固定次數
+uv run logsensing-serialwrap-powercycle --selector COM1 --count 100
+
+# 跑固定時間
+uv run logsensing-serialwrap-powercycle --selector COM1 --duration 8h
+
+# 兩者同時指定時，以先到者為主
+uv run logsensing-serialwrap-powercycle --selector COM1 --count 1000 --duration 12h
+```
+
+- 透過 `serialwrap` broker 在指定 `COMx / session_id / alias` 送 `reboot`
+- 啟動前會先檢查 daemon 與 session 是否已存在且能回到 `READY`
+- reboot 後若落到可恢復狀態，腳本會做最小 `session recover`
+- duration 與 count 同時指定時，會在**完成中的 cycle 結束後**，以先到的限制停止下一輪
 
 ### 支援平台
 
@@ -98,6 +164,7 @@ Raw Log ──▶ Phase 1: Parser ──▶ Phase 2: Analyzer ──▶ Phase 3:
 logsensing/
 ├── src/logsensing/
 │   ├── cli.py            # Typer CLI 入口
+│   ├── serialwrap_powercycle.py # serialwrap reboot powercycle script
 │   ├── config.py         # Pydantic 組態管理
 │   ├── parser/           # Phase 1: 日誌解析
 │   │   ├── splitter.py   #   串流式 Boot Cycle 切割
@@ -115,9 +182,10 @@ logsensing/
 │   └── rag/              # RAG 知識庫
 │       ├── chunker.py    #   文件切塊器
 │       ├── bm25.py       #   BM25 精準匹配索引
+│       ├── memory.py     #   平台經驗回寫與 store 管理
 │       ├── vector.py     #   FAISS 向量檢索索引
 │       └── retriever.py  #   混合檢索 API（RRF 融合）
-├── tests/                # 測試（143 tests）
+├── tests/                # pytest / playbook 測試
 ├── docs/                 # 文件
 └── samples/              # 測試用日誌樣本
 ```

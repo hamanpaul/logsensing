@@ -1,0 +1,133 @@
+{
+  "suite": "parser",
+  "description": "Parser phase playbook cases covering cycle split, timestamp handling, Drain3, and demux behavior.",
+  "cases": [
+    {
+      "case_id": "parser-split-primary-anchor",
+      "title": "Split boot cycles on primary anchor",
+      "purpose": "Verify StreamSplitter creates correct cycle boundaries when the primary boot anchor appears repeatedly.",
+      "inputs": [
+        "synthetic boot lines with repeated `U-Boot TPL` anchors",
+        "repo sample log `docs/sample_logs/20260318_ATT_newHW7-normal_1354.log`"
+      ],
+      "steps": [
+        "Feed log lines into StreamSplitter.split()",
+        "Inspect generated cycle ids and line counts",
+        "Read back cycle content with read_cycle_lines()"
+      ],
+      "expected": [
+        "each cycle starts at the anchor line",
+        "cycle count matches anchor occurrences",
+        "cycle content remains contiguous and ordered"
+      ],
+      "priority": "p0",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_splitter.py::TestSplitSmallLog",
+        "tests/test_splitter.py::TestReadCycleLines",
+        "tests/test_splitter.py::TestWithRealLog"
+      ]
+    },
+    {
+      "case_id": "parser-fallback-anchor",
+      "title": "Fallback anchor kicks in when primary anchor is absent",
+      "purpose": "Ensure fallback anchors can still split cycles when the main anchor is missing or corrupted.",
+      "inputs": [
+        "synthetic log without `U-Boot TPL`",
+        "fallback markers such as `Starting kernel` or `Booting Linux`"
+      ],
+      "steps": [
+        "configure StreamSplitter with fallback anchors",
+        "run split() over a log lacking the primary anchor",
+        "validate cycle boundaries derived from fallback markers"
+      ],
+      "expected": [
+        "cycle boundaries are still generated",
+        "no crash or empty-cycle regression occurs",
+        "fallback logic is deterministic"
+      ],
+      "priority": "p1",
+      "automation": "new",
+      "current_refs": [
+        "tests/test_splitter.py::TestIsAnchor"
+      ]
+    },
+    {
+      "case_id": "parser-timestamp-and-no-timestamp",
+      "title": "Handle both timestamped and raw serial logs",
+      "purpose": "Confirm parser logic works for BDK timestamped logs and prplOS raw serial logs without timestamps.",
+      "inputs": [
+        "BDK timestamped sample log",
+        "prplOS no-timestamp synthetic or external serial log"
+      ],
+      "steps": [
+        "build splitter from platform profile",
+        "parse timestamped and no-timestamp logs",
+        "verify timestamp parsing does not break no-timestamp mode"
+      ],
+      "expected": [
+        "BDK timestamps are parsed when present",
+        "prplOS path skips timestamp parsing safely",
+        "cycle detection works for both platforms"
+      ],
+      "priority": "p0",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_splitter.py::TestTimestampParsing",
+        "tests/test_platform.py::TestFromPlatform"
+      ]
+    },
+    {
+      "case_id": "parser-demux-channel-routing",
+      "title": "Route parsed lines into exact, regex, and other channels",
+      "purpose": "Validate demultiplexing of parsed records into channel groups with exact and regex rules.",
+      "inputs": [
+        "parsed lines with wlX, RPC, dhd, and unmatched module prefixes"
+      ],
+      "steps": [
+        "run Demultiplexer.demux() on parsed lines",
+        "compare resulting channel counts",
+        "verify unmatched lines go to the other channel"
+      ],
+      "expected": [
+        "exact-match channels receive expected lines",
+        "regex channels receive expected lines",
+        "unknown lines are preserved in `other`"
+      ],
+      "priority": "p0",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_demux.py::TestExactMatching",
+        "tests/test_demux.py::TestRegexMatching",
+        "tests/test_demux.py::TestOtherChannel",
+        "tests/test_demux.py::TestDemuxIntegration"
+      ]
+    },
+    {
+      "case_id": "parser-drain-template-persistence",
+      "title": "Learn and persist Drain3 templates",
+      "purpose": "Ensure Drain3 template learning and state persistence remain reproducible across save/load cycles.",
+      "inputs": [
+        "synthetic parsed lines with repeated patterns",
+        "repo sample log for template learning smoke coverage"
+      ],
+      "steps": [
+        "parse lines through DrainParser",
+        "persist state to disk",
+        "reload state and compare learned templates"
+      ],
+      "expected": [
+        "template counts are retained after reload",
+        "timestamp and module extraction remain stable",
+        "sample-log learning path does not regress"
+      ],
+      "priority": "p1",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_drain.py::TestTemplateLearning",
+        "tests/test_drain.py::TestPersistence",
+        "tests/test_drain.py::TestWithSampleLog"
+      ]
+    }
+  ]
+}

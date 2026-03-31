@@ -1,0 +1,95 @@
+{
+  "goal": "Map playbook cases to current automation coverage and highlight remaining gaps.",
+  "automation_levels": [
+    "existing",
+    "new",
+    "manual-assisted"
+  ],
+  "coverage": [
+    {
+      "suite": "parser",
+      "status": "mostly-covered",
+      "existing_case_ids": [
+        "parser-split-primary-anchor",
+        "parser-timestamp-and-no-timestamp",
+        "parser-demux-channel-routing",
+        "parser-drain-template-persistence"
+      ],
+      "gaps": [
+        "fallback-anchor split behavior still needs a dedicated regression test"
+      ],
+      "current_test_files": [
+        "tests/test_splitter.py",
+        "tests/test_demux.py",
+        "tests/test_drain.py"
+      ]
+    },
+    {
+      "suite": "analyzer",
+      "status": "covered",
+      "existing_case_ids": [
+        "analyzer-profile-cycle-milestones",
+        "analyzer-baseline-train-save-load",
+        "analyzer-pattern-rules",
+        "analyzer-timeout-and-sequence-rules",
+        "analyzer-otel-export-summary"
+      ],
+      "gaps": [],
+      "current_test_files": [
+        "tests/test_analyzer.py",
+        "tests/test_exporter.py"
+      ]
+    },
+    {
+      "suite": "reporter",
+      "status": "partially-covered",
+      "existing_case_ids": [
+        "reporter-bdk-cycle-timing",
+        "reporter-markdown-output"
+      ],
+      "gaps": [
+        "prplOS sequence-only reporting needs a dedicated reporter test",
+        "partial-cycle filtering needs a direct regression case"
+      ],
+      "current_test_files": [
+        "tests/test_reporter.py"
+      ]
+    },
+    {
+      "suite": "platform",
+      "status": "mostly-covered",
+      "existing_case_ids": [
+        "platform-profile-basics",
+        "platform-auto-detect",
+        "platform-component-factory"
+      ],
+      "gaps": [
+        "CLI explicit platform override matrix is not fully exercised"
+      ],
+      "current_test_files": [
+        "tests/test_platform.py",
+        "tests/test_cli.py"
+      ]
+    },
+    {
+      "suite": "agent",
+      "status": "partially-covered",
+      "existing_case_ids": [
+        "agent-rca-reporting",
+        "agent-interactive-shell-commands",
+        "agent-toolkit-log-and-baseline-access",
+        "agent-cli-rag-wiring"
+      ],
+      "gaps": [
+        "successful toolkit knowledge-base search still needs a positive-path test",
+        "missing-openai fallback path is not directly covered by an automated test"
+      ],
+      "current_test_files": [
+        "tests/test_agent.py",
+        "tests/test_tools.py",
+        "tests/test_cli.py",
+        "tests/test_rag.py"
+      ]
+    }
+  ]
+}

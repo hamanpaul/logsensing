@@ -31,13 +31,19 @@ htmlcov/
 .ruff_cache/
 
 # Sample logs (large files)
+*.log
+*.log.*
 docs/sample_logs/*.log
 docs/sample_logs/*.rar
+docs/sample_logs/
 
 # Output artifacts
 output/
 *.json
 !pyproject.toml
+
+# Generated RAG store / indices / experience memory
+.cache/logsensing/
 
 # uv
 uv.lock

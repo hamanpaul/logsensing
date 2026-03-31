@@ -230,6 +230,8 @@ class AgentToolkit:
                 "results": [
                     {
                         "source": r.chunk.source,
+                        "source_type": r.chunk.metadata.get("source_type", "doc"),
+                        "platform": r.chunk.metadata.get("platform", ""),
                         "score": round(r.score, 4),
                         "text": r.chunk.text[:500],
                     }

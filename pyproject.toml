@@ -32,6 +32,7 @@ dev = [
 
 [project.scripts]
 logsensing = "logsensing.cli:app"
+logsensing-serialwrap-powercycle = "logsensing.serialwrap_powercycle:main"
 
 [build-system]
 requires = ["hatchling"]

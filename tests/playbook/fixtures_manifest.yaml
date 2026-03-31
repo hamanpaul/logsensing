@@ -1,0 +1,73 @@
+{
+  "fixtures": [
+    {
+      "fixture_id": "bdk-sample-log",
+      "type": "repo-file",
+      "path": "docs/sample_logs/20260318_ATT_newHW7-normal_1354.log",
+      "availability": "checked-in",
+      "used_by": [
+        "parser-split-primary-anchor",
+        "parser-timestamp-and-no-timestamp",
+        "platform-auto-detect"
+      ],
+      "notes": "Main BDK sample log used by functional CLI and parser coverage."
+    },
+    {
+      "fixture_id": "prplos-external-log",
+      "type": "external-file",
+      "path_hint": "~/b-log/mini_COM1_260327-154959.log",
+      "availability": "external-env",
+      "used_by": [
+        "reporter-prplos-sequence-only",
+        "platform-auto-detect"
+      ],
+      "notes": "Not committed in the repo; needed for full prplOS end-to-end verification."
+    },
+    {
+      "fixture_id": "synthetic-analyzer-lines",
+      "type": "code-fixture",
+      "refs": [
+        "tests/test_analyzer.py::_make_lines",
+        "tests/test_analyzer.py::simple_lines"
+      ],
+      "availability": "in-tests",
+      "used_by": [
+        "analyzer-profile-cycle-milestones",
+        "analyzer-pattern-rules",
+        "analyzer-timeout-and-sequence-rules"
+      ],
+      "notes": "Synthetic timestamped lines for deterministic analyzer coverage."
+    },
+    {
+      "fixture_id": "toolkit-sample-payloads",
+      "type": "code-fixture",
+      "refs": [
+        "tests/test_tools.py::SAMPLE_ANOMALIES",
+        "tests/test_tools.py::SAMPLE_BASELINE",
+        "tests/test_tools.py::SAMPLE_DRAIN_STATE",
+        "tests/test_tools.py::SAMPLE_LOG_LINES"
+      ],
+      "availability": "in-tests",
+      "used_by": [
+        "agent-toolkit-log-and-baseline-access",
+        "agent-rca-reporting"
+      ],
+      "notes": "Synthetic structured payloads used for toolkit and RCA report tests."
+    },
+    {
+      "fixture_id": "temporary-knowledge-docs",
+      "type": "tmp-file",
+      "refs": [
+        "tests/test_cli.py::test_build_rag_retriever_from_docs_and_save_bm25",
+        "tests/test_cli.py::test_agent_analyze_wires_rag_retriever",
+        "tests/test_cli.py::test_agent_chat_wires_rag_retriever"
+      ],
+      "availability": "generated-at-runtime",
+      "used_by": [
+        "agent-cli-rag-wiring",
+        "agent-rag-search-tool"
+      ],
+      "notes": "Temporary markdown knowledge docs used to exercise BM25 / RAG integration."
+    }
+  ]
+}

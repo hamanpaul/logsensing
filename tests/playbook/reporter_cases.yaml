@@ -1,0 +1,96 @@
+{
+  "suite": "reporter",
+  "description": "Reporter playbook cases for boot timing analytics and markdown report generation.",
+  "cases": [
+    {
+      "case_id": "reporter-bdk-cycle-timing",
+      "title": "Compute per-cycle boot timing offsets for timestamped logs",
+      "purpose": "Validate timing extraction for timestamped BDK logs and derived process offsets.",
+      "inputs": [
+        "synthetic timestamped boot lines"
+      ],
+      "steps": [
+        "run BootTimingAnalyzer._analyze_cycle()",
+        "inspect total_seconds and process_offsets",
+        "verify key milestones such as Kernel Start and DHD FW Load"
+      ],
+      "expected": [
+        "total_seconds matches the last relevant process offset",
+        "process offsets are relative to cycle start",
+        "known process names are present in the result"
+      ],
+      "priority": "p0",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_reporter.py::TestBootTimingAnalyzer"
+      ]
+    },
+    {
+      "case_id": "reporter-markdown-output",
+      "title": "Render markdown timing report",
+      "purpose": "Ensure markdown output includes report title, device model, summary numbers, and process table content.",
+      "inputs": [
+        "synthetic BootTimingReport object"
+      ],
+      "steps": [
+        "call BootTimingAnalyzer.to_markdown()",
+        "inspect the returned markdown string"
+      ],
+      "expected": [
+        "markdown starts with a report heading",
+        "device model is shown",
+        "summary metrics and process names are rendered"
+      ],
+      "priority": "p1",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_reporter.py::TestBootTimingAnalyzer"
+      ]
+    },
+    {
+      "case_id": "reporter-prplos-sequence-only",
+      "title": "Fallback to sequence-only statistics when timestamps are absent",
+      "purpose": "Verify prplOS report generation uses line offsets instead of seconds when timestamps are unavailable.",
+      "inputs": [
+        "prplOS platform profile",
+        "raw serial log with no timestamps"
+      ],
+      "steps": [
+        "construct BootTimingAnalyzer from prplOS platform",
+        "analyze cycles with no timestamps",
+        "inspect process_line_offsets and total_lines"
+      ],
+      "expected": [
+        "report marks timing support as disabled",
+        "line-based offsets are populated",
+        "markdown/report output switches units from seconds to lines"
+      ],
+      "priority": "p0",
+      "automation": "new",
+      "current_refs": [
+        "tests/test_platform.py::TestFromPlatform"
+      ]
+    },
+    {
+      "case_id": "reporter-partial-cycle-filtering",
+      "title": "Skip partial or low-signal cycles in aggregate statistics",
+      "purpose": "Protect aggregate boot-time statistics from pre-boot fragments and incomplete cycles.",
+      "inputs": [
+        "multi-cycle log set containing pre-boot or partial fragments"
+      ],
+      "steps": [
+        "run report analysis with configured skip count",
+        "compare total cycles vs valid cycles",
+        "inspect aggregate stats stability"
+      ],
+      "expected": [
+        "partial cycles are excluded from valid aggregate calculations",
+        "valid_cycles is lower than total_cycles when fragments exist",
+        "summary output remains stable and deterministic"
+      ],
+      "priority": "p1",
+      "automation": "new",
+      "current_refs": []
+    }
+  ]
+}

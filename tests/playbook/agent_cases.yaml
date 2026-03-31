@@ -1,0 +1,146 @@
+{
+  "suite": "agent",
+  "description": "Agent playbook covering RCA generation, toolkit queries, interactive behavior, and RAG wiring.",
+  "cases": [
+    {
+      "case_id": "agent-rca-reporting",
+      "title": "Generate RCA reports from anomaly payloads",
+      "purpose": "Verify RCA summary and per-cycle reports render anomaly counts, severity, and context correctly.",
+      "inputs": [
+        "synthetic anomalies JSON"
+      ],
+      "steps": [
+        "create RCAReport from anomaly data or anomaly file",
+        "generate cycle report and summary report"
+      ],
+      "expected": [
+        "cycle reports contain severity, anomaly count, and context lines",
+        "summary report contains total counts and affected cycles"
+      ],
+      "priority": "p0",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_agent.py::TestRCAReport"
+      ]
+    },
+    {
+      "case_id": "agent-interactive-shell-commands",
+      "title": "Handle built-in interactive commands",
+      "purpose": "Ensure help, quit, exit, and unknown-command paths behave predictably in the interactive shell.",
+      "inputs": [
+        "InteractiveAgent command strings"
+      ],
+      "steps": [
+        "call _handle_command() with supported and unsupported commands",
+        "inspect boolean continuation behavior"
+      ],
+      "expected": [
+        "help returns continue=true",
+        "quit/exit return continue=false",
+        "unknown commands do not crash the agent"
+      ],
+      "priority": "p1",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_agent.py::TestInteractiveAgent"
+      ]
+    },
+    {
+      "case_id": "agent-toolkit-log-and-baseline-access",
+      "title": "Expose anomalies, context, baseline, templates, and log search through toolkit",
+      "purpose": "Validate the function-calling toolkit can serve structured anomaly and log data to the LLM.",
+      "inputs": [
+        "toolkit sample anomalies, baseline, drain state, and log lines"
+      ],
+      "steps": [
+        "call get_anomalies(), get_cycle_context(), get_baseline(), get_templates(), and search_logs()",
+        "inspect JSON payloads"
+      ],
+      "expected": [
+        "tool responses are JSON-serializable",
+        "cycle filtering works",
+        "result counts and payload fields remain stable"
+      ],
+      "priority": "p0",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_tools.py::TestGetAnomalies",
+        "tests/test_tools.py::TestGetCycleContext",
+        "tests/test_tools.py::TestGetBaseline",
+        "tests/test_tools.py::TestGetTemplates",
+        "tests/test_tools.py::TestSearchLogs"
+      ]
+    },
+    {
+      "case_id": "agent-rag-search-tool",
+      "title": "Search knowledge base through toolkit retriever",
+      "purpose": "Cover both no-retriever fallback and successful knowledge search results exposed to the LLM.",
+      "inputs": [
+        "toolkit with no retriever",
+        "toolkit with BM25 or hybrid retriever"
+      ],
+      "steps": [
+        "call search_knowledge_base() without retriever",
+        "call search_knowledge_base() with retriever configured"
+      ],
+      "expected": [
+        "missing retriever returns a structured error",
+        "configured retriever returns source, score, and text snippets"
+      ],
+      "priority": "p0",
+      "automation": "new",
+      "current_refs": [
+        "tests/test_tools.py::TestSearchKnowledgeBase"
+      ]
+    },
+    {
+      "case_id": "agent-cli-rag-wiring",
+      "title": "Pass RAG retriever into agent analyze/chat CLI flows",
+      "purpose": "Ensure CLI knowledge-doc and index options actually wire a retriever into AgentToolkit.",
+      "inputs": [
+        "temporary anomaly file",
+        "temporary knowledge-doc markdown",
+        "mock LLM client and mock AgentToolkit"
+      ],
+      "steps": [
+        "invoke `logsensing agent analyze` with --knowledge-doc",
+        "invoke `logsensing agent chat` with --knowledge-doc",
+        "capture the retriever passed into toolkit"
+      ],
+      "expected": [
+        "retriever is non-null when knowledge docs or indices are configured",
+        "help output exposes RAG options consistently",
+        "chat mode also reports RAG status"
+      ],
+      "priority": "p0",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_cli.py::test_build_rag_retriever_from_docs_and_save_bm25",
+        "tests/test_cli.py::test_agent_analyze_wires_rag_retriever",
+        "tests/test_cli.py::test_agent_chat_wires_rag_retriever"
+      ]
+    },
+    {
+      "case_id": "agent-optional-dependency-fallback",
+      "title": "Fallback gracefully when optional deps are missing",
+      "purpose": "Verify rule-based RCA or interactive fallback remains usable when LLM or vector dependencies are unavailable.",
+      "inputs": [
+        "environment without openai or FAISS/sentence-transformers"
+      ],
+      "steps": [
+        "invoke agent analyze/chat without agent extras",
+        "invoke RAG helper without vector deps"
+      ],
+      "expected": [
+        "agent falls back to rule-based RCA or interactive mode",
+        "RAG falls back to BM25-only with explicit messaging",
+        "no silent failure occurs"
+      ],
+      "priority": "p1",
+      "automation": "manual-assisted",
+      "current_refs": [
+        "tests/test_cli.py::test_build_rag_retriever_from_docs_and_save_bm25"
+      ]
+    }
+  ]
+}

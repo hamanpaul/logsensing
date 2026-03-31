@@ -50,9 +50,12 @@ class RagConfig(BaseModel):
 
     chunk_size: int = 512
     chunk_overlap: int = 64
+    index_root: str = ".cache/logsensing/rag"
     bm25_index_path: str = ""
     faiss_index_path: str = ""
     knowledge_docs: list[str] = Field(default_factory=list)
+    platform_docs: dict[str, list[str]] = Field(default_factory=dict)
+    auto_writeback: bool = True
 
 
 class AppConfig(BaseModel):
