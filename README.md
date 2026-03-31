@@ -121,6 +121,24 @@ bdk = ["docs/bdk-troubleshooting.md"]
 prplos = ["docs/prplos-notes.md"]
 ```
 
+### Serialwrap reboot powercycle script
+
+```bash
+# 跑固定次數
+uv run logsensing-serialwrap-powercycle --selector COM1 --count 100
+
+# 跑固定時間
+uv run logsensing-serialwrap-powercycle --selector COM1 --duration 8h
+
+# 兩者同時指定時，以先到者為主
+uv run logsensing-serialwrap-powercycle --selector COM1 --count 1000 --duration 12h
+```
+
+- 透過 `serialwrap` broker 在指定 `COMx / session_id / alias` 送 `reboot`
+- 啟動前會先檢查 daemon 與 session 是否已存在且能回到 `READY`
+- reboot 後若落到可恢復狀態，腳本會做最小 `session recover`
+- duration 與 count 同時指定時，會在**完成中的 cycle 結束後**，以先到的限制停止下一輪
+
 ### 支援平台
 
 | 平台 | 名稱 | 時間戳 | 說明 |
@@ -146,6 +164,7 @@ Raw Log ──▶ Phase 1: Parser ──▶ Phase 2: Analyzer ──▶ Phase 3:
 logsensing/
 ├── src/logsensing/
 │   ├── cli.py            # Typer CLI 入口
+│   ├── serialwrap_powercycle.py # serialwrap reboot powercycle script
 │   ├── config.py         # Pydantic 組態管理
 │   ├── parser/           # Phase 1: 日誌解析
 │   │   ├── splitter.py   #   串流式 Boot Cycle 切割
