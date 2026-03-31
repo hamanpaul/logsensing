@@ -1,0 +1,131 @@
+{
+  "suite": "analyzer",
+  "description": "Analyzer phase playbook cases covering baseline profiling, anomaly rules, and OTel export.",
+  "cases": [
+    {
+      "case_id": "analyzer-profile-cycle-milestones",
+      "title": "Profile milestone hits and missing milestones",
+      "purpose": "Verify milestone detection, first-hit semantics, line numbers, and missing milestone reporting.",
+      "inputs": [
+        "synthetic timestamped lines created by `_make_lines()`"
+      ],
+      "steps": [
+        "run BaselineProfiler.profile_cycle()",
+        "inspect hits, line numbers, and computed delta keys",
+        "inspect missing milestone list"
+      ],
+      "expected": [
+        "expected milestones are hit in order",
+        "first match wins for repeated milestones",
+        "missing milestones are reported explicitly"
+      ],
+      "priority": "p0",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_analyzer.py::TestProfileCycle"
+      ]
+    },
+    {
+      "case_id": "analyzer-baseline-train-save-load",
+      "title": "Train baseline statistics and round-trip persistence",
+      "purpose": "Ensure mean/stddev computation and baseline save/load behavior remain stable.",
+      "inputs": [
+        "synthetic CycleProfile sequences",
+        "temporary baseline output file"
+      ],
+      "steps": [
+        "train baseline from one or more cycle profiles",
+        "persist baseline to file",
+        "reload baseline and compare key fields"
+      ],
+      "expected": [
+        "mean/stddev values are correct",
+        "single-sample stddev is zero",
+        "save/load preserves milestone and delta data"
+      ],
+      "priority": "p0",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_analyzer.py::TestTrain",
+        "tests/test_analyzer.py::TestSaveLoad"
+      ]
+    },
+    {
+      "case_id": "analyzer-pattern-rules",
+      "title": "Detect critical and warning pattern anomalies",
+      "purpose": "Validate rule-based detection of kernel panic, OOM, watchdog reset, and no-anomaly paths.",
+      "inputs": [
+        "synthetic lines containing panic, OOM, watchdog, and normal messages"
+      ],
+      "steps": [
+        "run AnomalyDetector.detect()",
+        "inspect generated anomalies and severities",
+        "compare rule ids against expected patterns"
+      ],
+      "expected": [
+        "critical anomalies are classified correctly",
+        "warning anomalies are classified correctly",
+        "normal lines yield zero anomalies"
+      ],
+      "priority": "p0",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_analyzer.py::TestPatternDetection"
+      ]
+    },
+    {
+      "case_id": "analyzer-timeout-and-sequence-rules",
+      "title": "Trigger timeout and sequence anomalies against baseline",
+      "purpose": "Cover baseline-relative timeout detection and missing/invalid milestone sequence detection.",
+      "inputs": [
+        "BaselineProfile with mean/stddev deltas",
+        "synthetic logs with delayed or reordered milestones"
+      ],
+      "steps": [
+        "run detector with baseline attached",
+        "feed lines exceeding timeout thresholds",
+        "feed lines violating expected sequence"
+      ],
+      "expected": [
+        "timeout anomalies include the correct rule id",
+        "sequence anomalies include the correct rule id",
+        "context windows remain attached to anomalies"
+      ],
+      "priority": "p0",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_analyzer.py::TestTimeoutDetection",
+        "tests/test_analyzer.py::TestSequenceDetection",
+        "tests/test_analyzer.py::TestContextClipping"
+      ]
+    },
+    {
+      "case_id": "analyzer-otel-export-summary",
+      "title": "Export anomalies into grouped OTel traces",
+      "purpose": "Verify OTel export grouping, deterministic ids, timestamps, event context, and summary counts.",
+      "inputs": [
+        "synthetic anomaly objects across one or more cycles",
+        "temporary anomalies output file"
+      ],
+      "steps": [
+        "call OTelExporter.export() or file-output path",
+        "inspect trace grouping by cycle",
+        "verify summary metadata"
+      ],
+      "expected": [
+        "anomalies are grouped by cycle into traces",
+        "trace ids are deterministic",
+        "summary counts match the exported spans"
+      ],
+      "priority": "p1",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_exporter.py::test_same_cycle_grouped",
+        "tests/test_exporter.py::test_multiple_cycles",
+        "tests/test_exporter.py::test_trace_id_deterministic",
+        "tests/test_exporter.py::test_export_to_file",
+        "tests/test_exporter.py::test_summary_counts"
+      ]
+    }
+  ]
+}

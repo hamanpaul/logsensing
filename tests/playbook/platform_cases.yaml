@@ -1,0 +1,101 @@
+{
+  "suite": "platform",
+  "description": "Platform abstraction playbook covering profile selection, auto-detect, and component integration.",
+  "cases": [
+    {
+      "case_id": "platform-profile-basics",
+      "title": "Validate profile properties and timestamp capability flags",
+      "purpose": "Ensure BDK and prplOS profiles expose the expected timing capability and timestamp parsing behavior.",
+      "inputs": [
+        "BDK_PROFILE",
+        "PRPLOS_PROFILE"
+      ],
+      "steps": [
+        "inspect profile immutability",
+        "parse representative log lines",
+        "verify timestamp support flags"
+      ],
+      "expected": [
+        "BDK profile parses timestamps",
+        "prplOS profile returns no timestamps",
+        "profiles remain immutable"
+      ],
+      "priority": "p0",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_platform.py::TestPlatformProfile"
+      ]
+    },
+    {
+      "case_id": "platform-auto-detect",
+      "title": "Auto-detect platform from representative logs",
+      "purpose": "Verify registry auto-detection correctly distinguishes BDK and prplOS input logs.",
+      "inputs": [
+        "repo BDK sample log",
+        "external prplOS log when available"
+      ],
+      "steps": [
+        "run auto_detect() on each candidate log",
+        "run resolve_platform('auto', logfile)",
+        "compare detected profile names"
+      ],
+      "expected": [
+        "BDK sample resolves to bdk",
+        "prplOS sample resolves to prplos when available",
+        "manual override remains possible"
+      ],
+      "priority": "p0",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_platform.py::TestAutoDetect",
+        "tests/test_platform.py::TestRegistry"
+      ]
+    },
+    {
+      "case_id": "platform-component-factory",
+      "title": "Construct parser/analyzer components from platform profile",
+      "purpose": "Ensure splitter, demux, baseline, detector, and reporter can all be built from a platform profile.",
+      "inputs": [
+        "BDK_PROFILE",
+        "PRPLOS_PROFILE"
+      ],
+      "steps": [
+        "construct each component via from_platform()",
+        "inspect core fields such as timestamp regex and channel definitions"
+      ],
+      "expected": [
+        "components are created without fallback regressions",
+        "prplOS detector/splitter disable timestamp parsing",
+        "BDK components retain timestamp support"
+      ],
+      "priority": "p0",
+      "automation": "existing",
+      "current_refs": [
+        "tests/test_platform.py::TestFromPlatform"
+      ]
+    },
+    {
+      "case_id": "platform-cli-override-matrix",
+      "title": "Use CLI platform override on parse/analyze/report/agent commands",
+      "purpose": "Cover explicit `--platform` routing through CLI commands instead of relying solely on auto-detect.",
+      "inputs": [
+        "CLI invocations with `--platform bdk` and `--platform prplos`"
+      ],
+      "steps": [
+        "invoke CLI help and functional commands with explicit platform options",
+        "compare parser/analyzer behavior against expected platform mode"
+      ],
+      "expected": [
+        "commands accept the option consistently",
+        "platform override wins over auto-detection",
+        "agent raw-log loading uses the same platform setting"
+      ],
+      "priority": "p1",
+      "automation": "new",
+      "current_refs": [
+        "tests/test_cli.py::test_agent_analyze_help",
+        "tests/test_cli.py::test_agent_chat_help"
+      ]
+    }
+  ]
+}
