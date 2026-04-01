@@ -136,7 +136,9 @@ uv run logsensing-serialwrap-powercycle --selector COM1 --count 1000 --duration 
 
 - 透過 `serialwrap` broker 在指定 `COMx / session_id / alias` 送 `reboot`
 - 啟動前會先檢查 daemon 與 session 是否已存在且能回到 `READY`
-- reboot 後若落到可恢復狀態，腳本會做最小 `session recover`
+- `READY` session 會在 reboot 期間採被動等待，避免 probe/recover 干擾 autoboot
+- `ATTACHED/passthrough` session 會自動改走 raw console + capture log 路徑
+- 必要時可用 `--ready-regex` 明確指定 shell prompt 判斷規則
 - duration 與 count 同時指定時，會在**完成中的 cycle 結束後**，以先到的限制停止下一輪
 
 ### 支援平台

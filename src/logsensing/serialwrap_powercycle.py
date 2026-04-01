@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, TextIO
 
 DEFAULT_SERIALWRAP_BIN = os.environ.get(
@@ -48,6 +50,7 @@ class PowerCycleConfig:
     reboot_detect_timeout_s: float
     recover_timeout_s: float
     poll_interval_s: float
+    ready_regex: str | None
 
 
 def parse_duration(raw: str) -> float:
@@ -97,7 +100,7 @@ def positive_float(raw: str) -> float:
 
 def _payload_status(payload: dict[str, Any]) -> str | None:
     """Extract a best-effort status string from a serialwrap JSON payload."""
-    for key in ("status", "result", "outcome", "error_code"):
+    for key in ("status", "result", "outcome", "error_code", "classification"):
         value = payload.get(key)
         if isinstance(value, str) and value:
             return value.upper()
@@ -218,6 +221,55 @@ class SerialwrapClient:
             allow_error=True,
         )
 
+    def log_status(self, selector: str) -> dict[str, Any]:
+        return self._run_json(
+            ["session", "log-status", "--selector", selector],
+            allow_error=True,
+        )
+
+    def log_start(self, selector: str) -> dict[str, Any]:
+        return self._run_json(
+            ["session", "log-start", "--selector", selector],
+            allow_error=True,
+        )
+
+    def console_attach(self, selector: str, label: str) -> dict[str, Any]:
+        return self._run_json(
+            ["session", "console-attach", "--selector", selector, "--label", label],
+            allow_error=True,
+        )
+
+    def console_detach(self, selector: str, client_id: str) -> dict[str, Any]:
+        return self._run_json(
+            ["session", "console-detach", "--selector", selector, "--client-id", client_id],
+            allow_error=True,
+        )
+
+    def interactive_status(self, interactive_id: str, screen_chars: int = 4096) -> dict[str, Any]:
+        return self._run_json(
+            [
+                "session",
+                "interactive-status",
+                "--interactive-id",
+                interactive_id,
+                "--screen-chars",
+                str(screen_chars),
+            ],
+            allow_error=True,
+        )
+
+    def interactive_send(self, interactive_id: str, data: str) -> dict[str, Any]:
+        return self._run_json(
+            ["session", "interactive-send", "--interactive-id", interactive_id, "--data", data],
+            allow_error=True,
+        )
+
+    def interactive_close(self, interactive_id: str) -> dict[str, Any]:
+        return self._run_json(
+            ["session", "interactive-close", "--interactive-id", interactive_id],
+            allow_error=True,
+        )
+
 
 def _parse_json_output(stdout: str) -> dict[str, Any]:
     """Parse CLI stdout as JSON."""
@@ -299,22 +351,17 @@ def wait_for_reboot_cycle(
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> float:
-    """Wait until reboot is observed and the session returns to READY."""
+    """Wait passively until reboot is observed and the session returns to READY."""
     ensure_session_exists(client, config.selector)
     cycle_start = monotonic()
     detect_deadline = cycle_start + config.reboot_detect_timeout_s
     ready_deadline = cycle_start + config.ready_timeout_s
     saw_not_ready = False
     last_status = "READY"
-    last_recover_at: float | None = None
 
     while monotonic() < ready_deadline:
         session = client.find_session(config.selector)
-        session_state = _session_state(session)
-
-        payload = client.self_test(config.selector)
-        observed = _payload_status(payload)
-        normalized = "READY" if observed == "OK" else observed or session_state or "UNKNOWN"
+        normalized = _session_state(session) or "UNKNOWN"
         last_status = normalized
 
         if normalized != "READY":
@@ -329,18 +376,189 @@ def wait_for_reboot_cycle(
                 "未觀察到 session 離開 READY"
             )
 
-        if saw_not_ready and normalized in RECOVERABLE_STATUSES and (
-            last_recover_at is None or monotonic() - last_recover_at >= config.poll_interval_s
-        ):
-            client.recover(config.selector, config.recover_timeout_s)
-            last_recover_at = monotonic()
-
         sleep(config.poll_interval_s)
 
     raise TimeoutError(
         f"session {config.selector} reboot 後在 {config.ready_timeout_s:.0f}s 內"
         f"未回到 READY (last_status={last_status})"
     )
+
+
+def _ensure_capture_log(client: SerialwrapClient, selector: str) -> Path:
+    payload = client.log_status(selector)
+    log_path = payload.get("log_path")
+    if payload.get("active") is True and isinstance(log_path, str) and log_path:
+        return Path(log_path).expanduser()
+    started = client.log_start(selector)
+    log_path = started.get("log_path")
+    if not isinstance(log_path, str) or not log_path:
+        raise RuntimeError(f"無法啟動 session capture: {started}")
+    return Path(log_path).expanduser()
+
+
+def infer_ready_regex(screen: str) -> str | None:
+    """Infer a shell prompt regex from the latest interactive screen."""
+    for raw_line in reversed(screen.splitlines()):
+        line = raw_line.rstrip()
+        if not line:
+            continue
+        if "root@" in line and "#" in line:
+            return r"(?m)^root@[^:\n]+:.*# ?$"
+        if line.endswith("#") or line.endswith("# ") or line.endswith(">") or line.endswith("> "):
+            return rf"(?m)^{re.escape(line.rstrip())}\s*$"
+    return None
+
+
+def wait_for_passthrough_reboot(
+    client: SerialwrapClient,
+    config: PowerCycleConfig,
+    *,
+    log_path: Path,
+    file_offset: int,
+    interactive_id: str,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> float:
+    """Wait for a raw passthrough console to reboot and return to a shell prompt."""
+    if not config.ready_regex:
+        raise RuntimeError("passthrough 模式需要 ready_regex")
+    ready_re = re.compile(config.ready_regex)
+    cycle_start = monotonic()
+    detect_deadline = cycle_start + config.reboot_detect_timeout_s
+    ready_deadline = cycle_start + config.ready_timeout_s
+    saw_activity = False
+    buffer = ""
+
+    while monotonic() < ready_deadline:
+        if log_path.exists():
+            with log_path.open("r", encoding="utf-8", errors="replace") as fp:
+                fp.seek(file_offset)
+                chunk = fp.read()
+            if chunk:
+                file_offset += len(chunk)
+                buffer += chunk
+                saw_activity = True
+                if ready_re.search(buffer):
+                    return monotonic() - cycle_start
+
+        client.interactive_status(interactive_id)
+
+        if not saw_activity and monotonic() >= detect_deadline:
+            raise TimeoutError(
+                "已送出 reboot，但在 "
+                f"{config.reboot_detect_timeout_s:.0f}s 內未觀察到新的 UART 輸出"
+            )
+        sleep(config.poll_interval_s)
+
+    raise TimeoutError(
+        f"session {config.selector} reboot 後在 {config.ready_timeout_s:.0f}s 內"
+        "未在 capture log 內看到 shell prompt"
+    )
+
+
+def run_powercycle_passthrough(
+    client: SerialwrapClient,
+    config: PowerCycleConfig,
+    *,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+    stdout: TextIO = sys.stdout,
+) -> int:
+    """Execute reboot cycles through a raw passthrough console."""
+    session = client.find_session(config.selector)
+    if session is None:
+        raise RuntimeError(f"找不到 selector={config.selector} 的 serialwrap session")
+
+    capture_path = _ensure_capture_log(client, config.selector)
+    attached = client.console_attach(config.selector, "agent-powercycle")
+    client_id = attached.get("client_id")
+    interactive_id = attached.get("interactive_session_id")
+    if not isinstance(client_id, str) or not isinstance(interactive_id, str):
+        raise RuntimeError(f"無法建立 agent console: {attached}")
+
+    try:
+        if config.ready_regex is None:
+            status = client.interactive_status(interactive_id)
+            screen = str(status.get("screen", ""))
+            inferred = infer_ready_regex(screen)
+            if inferred is None:
+                raise RuntimeError("無法從目前畫面推斷 shell prompt，請改用 --ready-regex")
+            config = PowerCycleConfig(
+                selector=config.selector,
+                count=config.count,
+                duration_s=config.duration_s,
+                reboot_cmd=config.reboot_cmd,
+                source=config.source,
+                serialwrap_bin=config.serialwrap_bin,
+                cmd_timeout_s=config.cmd_timeout_s,
+                ready_timeout_s=config.ready_timeout_s,
+                reboot_detect_timeout_s=config.reboot_detect_timeout_s,
+                recover_timeout_s=config.recover_timeout_s,
+                poll_interval_s=config.poll_interval_s,
+                ready_regex=inferred,
+            )
+
+        started_at = monotonic()
+        cycles_completed = 0
+        _write_line(
+            stdout,
+            (
+                f"Start powercycle (passthrough): selector={config.selector}, "
+                f"count={config.count or '-'}, duration={_format_duration(config.duration_s)}, "
+                f"log={capture_path}"
+            ),
+        )
+
+        while True:
+            elapsed = monotonic() - started_at
+            if config.count is not None and cycles_completed >= config.count:
+                reason = "count"
+                break
+            if config.duration_s is not None and elapsed >= config.duration_s:
+                reason = "duration"
+                break
+
+            cycle_no = cycles_completed + 1
+            file_offset = capture_path.stat().st_size if capture_path.exists() else 0
+            _write_line(
+                stdout,
+                f"[cycle {cycle_no}] send reboot via raw console: {config.reboot_cmd}",
+            )
+            send_result = client.interactive_send(interactive_id, config.reboot_cmd + "\n")
+            if send_result.get("ok") is not True:
+                raise RuntimeError(f"reboot interactive_send 失敗: {send_result}")
+
+            reboot_elapsed = wait_for_passthrough_reboot(
+                client,
+                config,
+                log_path=capture_path,
+                file_offset=file_offset,
+                interactive_id=interactive_id,
+                monotonic=monotonic,
+                sleep=sleep,
+            )
+            cycles_completed += 1
+            total_elapsed = monotonic() - started_at
+            _write_line(
+                stdout,
+                (
+                    f"[cycle {cycle_no}] prompt detected again, "
+                    f"reboot_elapsed={reboot_elapsed:.1f}s, total_elapsed={total_elapsed:.1f}s"
+                ),
+            )
+
+        total_elapsed = monotonic() - started_at
+        _write_line(
+            stdout,
+            (
+                f"Done: completed_cycles={cycles_completed}, "
+                f"reason={reason}, total_elapsed={total_elapsed:.1f}s"
+            ),
+        )
+        return cycles_completed
+    finally:
+        client.interactive_close(interactive_id)
+        client.console_detach(config.selector, client_id)
 
 
 def run_powercycle(
@@ -353,6 +571,17 @@ def run_powercycle(
 ) -> int:
     """Execute reboot cycles until count or duration limit is reached."""
     check_daemon_health(client)
+    session = client.find_session(config.selector)
+    if session is None:
+        raise RuntimeError(f"找不到 selector={config.selector} 的 serialwrap session")
+    if session.get("state") == "ATTACHED" and session.get("platform") == "passthrough":
+        return run_powercycle_passthrough(
+            client,
+            config,
+            monotonic=monotonic,
+            sleep=sleep,
+            stdout=stdout,
+        )
     ensure_session_ready(client, config, monotonic=monotonic, sleep=sleep)
 
     started_at = monotonic()
@@ -494,6 +723,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=2.0,
         help="輪詢 session/self-test 的間隔秒數",
     )
+    parser.add_argument(
+        "--ready-regex",
+        default=None,
+        help="passthrough 模式下用來判斷 shell 已恢復的 regex",
+    )
     return parser
 
 
@@ -516,6 +750,7 @@ def main(argv: list[str] | None = None) -> int:
         reboot_detect_timeout_s=args.reboot_detect_timeout,
         recover_timeout_s=args.recover_timeout,
         poll_interval_s=args.poll_interval,
+        ready_regex=args.ready_regex,
     )
     client = SerialwrapClient(config.serialwrap_bin)
     try:
