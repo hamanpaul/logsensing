@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
@@ -50,7 +50,7 @@ class Anomaly(BaseModel):
     message: str = ""
     context_before: list[str] = Field(default_factory=list)
     context_after: list[str] = Field(default_factory=list)
-    metadata: dict = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +130,7 @@ class AnomalyDetector:
         """從 PlatformProfile 建立 AnomalyDetector."""
         ts_re = re.compile(platform.timestamp_pattern) if platform.timestamp_pattern else None
         return cls(
+            rules=[*cls.DEFAULT_RULES, *platform.anomaly_rules],
             baseline=baseline,
             context_lines_before=context_lines_before,
             context_lines_after=context_lines_after,
@@ -197,6 +198,9 @@ class AnomalyDetector:
     def _detect_timeouts(self, cycle_id: int, cycle_profile: CycleProfile) -> list[Anomaly]:
         timeout_rules = [r for r in self.rules if r.rule_type == "timeout"]
         anomalies: list[Anomaly] = []
+        baseline = self.baseline
+        if baseline is None:
+            return anomalies
 
         for rule in timeout_rules:
             pair = rule.milestone_pair
@@ -204,12 +208,12 @@ class AnomalyDetector:
                 continue
             if pair not in cycle_profile.deltas:
                 continue
-            if pair not in self.baseline.mean_deltas:
+            if pair not in baseline.mean_deltas:
                 continue
 
             actual = cycle_profile.deltas[pair]
-            mean = self.baseline.mean_deltas[pair]
-            stddev = self.baseline.stddev_deltas.get(pair, 0.0)
+            mean = baseline.mean_deltas[pair]
+            stddev = baseline.stddev_deltas.get(pair, 0.0)
             threshold = mean + rule.timeout_sigma * stddev
 
             if actual > threshold:
@@ -266,7 +270,7 @@ class AnomalyDetector:
         return before, after
 
     def _parse_timestamp(self, line: str) -> datetime | None:
-        if self._ts_re is None:
+        if self._ts_re is None or self._ts_fmt is None:
             return None
         m = self._ts_re.match(line)
         if m:

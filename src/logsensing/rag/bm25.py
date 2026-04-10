@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from logsensing.rag.chunker import Chunk
 
@@ -22,7 +23,7 @@ class BM25Index:
 
     def __init__(self) -> None:
         self._chunks: list[Chunk] = []
-        self._index: object | None = None  # BM25Okapi instance
+        self._index: Any | None = None  # BM25Okapi instance
         self._tokenized: list[list[str]] = []
 
     def build(self, chunks: list[Chunk]) -> None:
@@ -39,12 +40,32 @@ class BM25Index:
             return []
 
         tokens = self._tokenize(query)
+        if not tokens:
+            return []
         scores = self._index.get_scores(tokens)
 
         ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)[:top_k]
-        return [
+        results = [
             SearchResult(chunk=self._chunks[idx], score=float(score))
             for idx, score in ranked
+            if score > 0
+        ]
+        if results:
+            return results
+
+        # BM25 on tiny corpora (especially a single document) can return all zeros.
+        # Fall back to token overlap so BM25-only mode still returns usable hits.
+        overlap_ranked = sorted(
+            (
+                (idx, self._overlap_score(tokens, doc_tokens))
+                for idx, doc_tokens in enumerate(self._tokenized)
+            ),
+            key=lambda item: item[1],
+            reverse=True,
+        )[:top_k]
+        return [
+            SearchResult(chunk=self._chunks[idx], score=float(score))
+            for idx, score in overlap_ranked
             if score > 0
         ]
 
@@ -87,3 +108,11 @@ class BM25Index:
     def _tokenize(text: str) -> list[str]:
         """Simple whitespace + lowercase tokenizer."""
         return text.lower().split()
+
+    @staticmethod
+    def _overlap_score(query_tokens: list[str], doc_tokens: list[str]) -> float:
+        if not query_tokens or not doc_tokens:
+            return 0.0
+        query_set = set(query_tokens)
+        doc_set = set(doc_tokens)
+        return float(len(query_set & doc_set)) / float(len(query_set))

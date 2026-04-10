@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+
+if sys.version_info >= (3, 11):
+    import tomllib as toml_loader
+else:
+    import tomli as toml_loader  # type: ignore[import-not-found]
 
 
 class ParserConfig(BaseModel):
@@ -17,6 +23,9 @@ class ParserConfig(BaseModel):
     )
     encoding: str = "utf-8"
     max_cycle_lines: int = 100_000
+    aaak_enabled: bool = False
+    aaak_entity_map: dict[str, str] = Field(default_factory=dict)
+    aaak_max_summary_items: int = 5
 
 
 class DrainConfig(BaseModel):
@@ -56,6 +65,10 @@ class RagConfig(BaseModel):
     knowledge_docs: list[str] = Field(default_factory=list)
     platform_docs: dict[str, list[str]] = Field(default_factory=dict)
     auto_writeback: bool = True
+    prefer_compact_experience: bool = False
+    vector_backend: str = "faiss"
+    vector_compression_bits: int = 4
+    vector_rotation_seed: int = 0
 
 
 class AppConfig(BaseModel):
@@ -71,11 +84,6 @@ class AppConfig(BaseModel):
     @classmethod
     def from_toml(cls, path: Path) -> AppConfig:
         """從 TOML 檔案載入組態."""
-        try:
-            import tomllib
-        except ModuleNotFoundError:  # Python < 3.11
-            import tomli as tomllib  # type: ignore[no-redef]
-
         with open(path, "rb") as f:
-            data = tomllib.load(f)
+            data = toml_loader.load(f)
         return cls(**data)

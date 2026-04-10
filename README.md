@@ -104,16 +104,26 @@ logsensing agent chat \
 
 - `--knowledge-doc` 可重複指定；若有設定 `rag.platform_docs`，會與該平台文件一起納入
 - `agent analyze` 在提供 `--logfile` 且可判定平台時，會把本次 RCA 的**結構化摘要**自動寫回平台 RAG
+- `parser.aaak_enabled = true` 時，`parse` 會額外輸出 `templates.aaak`，平台 experience 也會額外輸出一份 `.aaak` compact 摘要檔
+- `rag.prefer_compact_experience = true` 時，RAG 會優先讀取 `.aaak` compact experience；若不存在則回退既有 markdown
 - 預設 store 位置為 `.cache/logsensing/rag/<platform>/`
 - 下一次同平台分析時，會自動把該平台累積的 `experiences/` 納入檢索
 - `--bm25-index` / `--faiss-index` 若已存在會直接載入；不存在則會從文件與歷史 experience 建立後落盤
+- `rag.vector_backend = "turboquant"` 時，會使用 paper-derived 的旋轉 + 低 bit quantization backend；若不可用，會回退 `faiss`，再不行則降級為 **BM25-only**
 - 若未安裝向量檢索相依，會自動降級為 **BM25-only**；安裝完整 RAG 相依請執行 `uv sync --extra rag`
 
 ```toml
 # config.toml
+[parser]
+aaak_enabled = true
+
 [rag]
 index_root = ".cache/logsensing/rag"
 auto_writeback = true
+prefer_compact_experience = true
+vector_backend = "turboquant"
+vector_compression_bits = 4
+vector_rotation_seed = 0
 knowledge_docs = ["docs/spec.md"]
 
 [rag.platform_docs]
@@ -211,8 +221,10 @@ uv run mypy src/
 
 ## 文件
 
-- [開發計畫](docs/plan.md)
 - [技術規格](docs/spec.md)
+- [測試計畫](docs/test.md)
+- [開發 Roadmap](docs/plan.md)
+- [任務拆解](docs/task.md)
 - [待辦追蹤](docs/todo.md)
 - [原始開發計畫書](docs/logsensing-agent-dev.md)
 

@@ -5,11 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
 from logsensing.rag.bm25 import BM25Index, SearchResult
 from logsensing.rag.chunker import Chunk, DocumentChunker
 from logsensing.rag.retriever import HybridRetriever
+from logsensing.rag.turboquant import TurboQuantVectorIndex
 
 # ---------------------------------------------------------------------------
 # Shared helpers / fixtures
@@ -236,6 +238,100 @@ class TestVectorIndex:
 
 
 # ===================================================================
+# TurboQuantVectorIndex tests
+# ===================================================================
+class FakeEncoder:
+    """Deterministic encoder for backend tests without external model deps."""
+
+    def __init__(self) -> None:
+        self._basis = {
+            "kernel": np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            "panic": np.array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            "wifi": np.array([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            "driver": np.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            "memory": np.array([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            "boot": np.array([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0], dtype=np.float32),
+            "dhcp": np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0], dtype=np.float32),
+            "rpc": np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+        }
+
+    def encode(
+        self,
+        texts: list[str],
+        *,
+        normalize_embeddings: bool = True,
+        show_progress_bar: bool = False,
+    ) -> np.ndarray:
+        del show_progress_bar
+        embeddings: list[np.ndarray] = []
+        for text in texts:
+            vector = np.zeros(8, dtype=np.float32)
+            lowered = text.lower()
+            for token, basis in self._basis.items():
+                if token in lowered:
+                    vector += basis
+            if not np.any(vector):
+                vector[0] = 1.0
+            if normalize_embeddings:
+                vector = vector / np.linalg.norm(vector)
+            embeddings.append(vector)
+        return np.array(embeddings, dtype=np.float32)
+
+
+class TestTurboQuantVectorIndex:
+    """TurboQuant-style backend tests."""
+
+    def test_build_and_search_with_fake_encoder(self, sample_chunks: list[Chunk]) -> None:
+        index = TurboQuantVectorIndex(
+            bit_width=4,
+            rotation_seed=7,
+            encoder=FakeEncoder(),
+        )
+
+        index.build(sample_chunks)
+        results = index.search("kernel panic", top_k=2)
+
+        assert len(results) == 2
+        assert results[0].chunk.chunk_id == "doc:0"
+
+    def test_save_and_load_round_trip(self, sample_chunks: list[Chunk], tmp_path: Path) -> None:
+        index = TurboQuantVectorIndex(
+            bit_width=3,
+            rotation_seed=3,
+            encoder=FakeEncoder(),
+        )
+        index.build(sample_chunks)
+
+        save_dir = tmp_path / "turboquant"
+        index.save(save_dir)
+
+        loaded = TurboQuantVectorIndex(encoder=FakeEncoder())
+        loaded.load(save_dir)
+        results = loaded.search("wifi driver", top_k=2)
+
+        assert (save_dir / "meta.json").exists()
+        assert (save_dir / "quantized.npz").exists()
+        assert results
+        assert results[0].chunk.chunk_id == "doc:2"
+
+    def test_saved_metadata_marks_backend(self, sample_chunks: list[Chunk], tmp_path: Path) -> None:
+        index = TurboQuantVectorIndex(
+            bit_width=4,
+            rotation_seed=11,
+            encoder=FakeEncoder(),
+        )
+        index.build(sample_chunks)
+        save_dir = tmp_path / "turboquant"
+        index.save(save_dir)
+
+        meta = (save_dir / "meta.json").read_text(encoding="utf-8")
+
+        assert '"backend": "turboquant"' in meta
+        assert '"version": "turboquant-vector-v1"' in meta
+        assert '"bit_width": 4' in meta
+
+
+# ===================================================================
 # HybridRetriever tests
 # ===================================================================
 class TestHybridRetriever:
@@ -285,3 +381,20 @@ class TestHybridRetriever:
         retriever = HybridRetriever()
         results = retriever.search("anything")
         assert results == []
+
+    def test_hybrid_with_turboquant_backend(self, sample_chunks: list[Chunk]) -> None:
+        """Hybrid retriever should work with the compressed backend."""
+        bm25 = BM25Index()
+        bm25.build(sample_chunks)
+        vector = TurboQuantVectorIndex(
+            bit_width=4,
+            rotation_seed=5,
+            encoder=FakeEncoder(),
+        )
+        vector.build(sample_chunks)
+
+        retriever = HybridRetriever(bm25=bm25, vector=vector)
+        results = retriever.search("kernel panic", top_k=3)
+
+        assert results
+        assert any(result.chunk.chunk_id == "doc:0" for result in results)

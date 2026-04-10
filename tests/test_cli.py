@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from logsensing.cli import _build_rag_retriever, app
+from logsensing.cli import _build_rag_retriever, _load_vector_backend, app
 from logsensing.config import AppConfig
 from logsensing.rag.memory import (
     build_experience_artifact,
@@ -23,6 +23,7 @@ runner = CliRunner()
 SAMPLE_LOG = (
     Path(__file__).parent.parent / "docs" / "sample_logs" / "20260318_ATT_newHW7-normal_1354.log"
 )
+PRPLOS_EXTERNAL_LOG = Path.home() / "b-log" / "mini_COM1_260327-154959.log"
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +152,37 @@ def test_train_drain_with_sample_log(tmp_path: Path) -> None:
     assert output_file.stat().st_size > 0
 
 
+@pytest.mark.skipif(not PRPLOS_EXTERNAL_LOG.exists(), reason="prplOS b-log not found")
+def test_analyze_with_prplos_external_log_finds_known_issues(tmp_path: Path) -> None:
+    """analyze 應能在真實 prplOS b-log 中找出已知問題."""
+    output_file = tmp_path / "prplos-anomalies.json"
+    result = runner.invoke(
+        app,
+        [
+            "analyze",
+            str(PRPLOS_EXTERNAL_LOG),
+            "--platform",
+            "prplos",
+            "--output",
+            str(output_file),
+        ],
+    )
+
+    assert result.exit_code == 0, f"analyze failed:\n{result.output}"
+    payload = json.loads(output_file.read_text(encoding="utf-8"))
+    assert payload["summary"]["total_anomalies"] > 0
+    rule_ids = {
+        span["attributes"]["anomaly.rule_id"]
+        for trace in payload["traces"]
+        for span in trace["spans"]
+    }
+    assert "boot_timeout" in rule_ids
+    assert "phy_lookup_failed" in rule_ids
+    assert "overlayfs_inode_failure" in rule_ids
+    assert "cfg80211_error" in rule_ids
+    assert "fatal_signal" in rule_ids
+
+
 def test_build_rag_retriever_from_docs_and_save_bm25(tmp_path: Path) -> None:
     """RAG retriever 應能從文件建立並儲存 BM25 索引."""
     kb_doc = tmp_path / "kb.md"
@@ -171,6 +203,133 @@ def test_build_rag_retriever_from_docs_and_save_bm25(tmp_path: Path) -> None:
     results = retriever.search("kernel panic", top_k=3)
     assert results
     assert any("kernel panic" in r.chunk.text.lower() for r in results)
+
+
+def test_parse_writes_aaak_template_summary_when_enabled(tmp_path: Path) -> None:
+    """parse 啟用 AAAK 時應輸出模板摘要檔."""
+    logfile = tmp_path / "device.log"
+    logfile.write_text(
+        "\n".join(
+            [
+                "U-Boot TPL",
+                "RPC: initializing rpc_init service",
+                "RPC: initializing rpc_ba service",
+                "Kernel panic - not syncing",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[parser]\naaak_enabled = true\n", encoding="utf-8")
+    output_dir = tmp_path / "parse_output"
+
+    result = runner.invoke(
+        app,
+        [
+            "parse",
+            str(logfile),
+            "--output",
+            str(output_dir),
+            "--config",
+            str(config_path),
+            "--platform",
+            "prplos",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    compact_path = output_dir / "templates.aaak"
+    assert compact_path.exists()
+    compact_text = compact_path.read_text(encoding="utf-8")
+    assert "TPLSET|fmt=aaak-log-v1" in compact_text
+
+
+def test_load_vector_backend_falls_back_to_faiss_when_turboquant_load_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """TurboQuant 載入失敗時應回退 FAISS backend，而不是直接拋例外."""
+    import logsensing.rag.turboquant as turboquant_module
+    import logsensing.rag.vector as vector_module
+
+    class FakeTurboQuantVectorIndex:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            del args, kwargs
+
+        @property
+        def is_available(self) -> bool:
+            return True
+
+        def load(self, path: Path) -> None:
+            del path
+            raise ValueError("bad turboquant metadata")
+
+    class FakeVectorIndex:
+        def __init__(self) -> None:
+            self.loaded_path: Path | None = None
+
+        @property
+        def is_available(self) -> bool:
+            return True
+
+        def load(self, path: Path) -> None:
+            self.loaded_path = path
+
+    monkeypatch.setattr(turboquant_module, "TurboQuantVectorIndex", FakeTurboQuantVectorIndex)
+    monkeypatch.setattr(vector_module, "VectorIndex", FakeVectorIndex)
+
+    vector, backend = _load_vector_backend(
+        AppConfig(rag={"vector_backend": "turboquant"}),
+        tmp_path,
+        backend_name="turboquant",
+    )
+
+    assert backend == "faiss"
+    assert isinstance(vector, FakeVectorIndex)
+    assert vector.loaded_path == tmp_path
+
+
+def test_load_vector_backend_returns_none_when_all_loaders_fail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """當 TurboQuant 與 FAISS 都無法從同一路徑載入時，不應 crash."""
+    import logsensing.rag.turboquant as turboquant_module
+    import logsensing.rag.vector as vector_module
+
+    class FakeTurboQuantVectorIndex:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            del args, kwargs
+
+        @property
+        def is_available(self) -> bool:
+            return True
+
+        def load(self, path: Path) -> None:
+            del path
+            raise ValueError("unsupported metadata")
+
+    class FakeVectorIndex:
+        @property
+        def is_available(self) -> bool:
+            return True
+
+        def load(self, path: Path) -> None:
+            del path
+            raise FileNotFoundError("index.faiss missing")
+
+    monkeypatch.setattr(turboquant_module, "TurboQuantVectorIndex", FakeTurboQuantVectorIndex)
+    monkeypatch.setattr(vector_module, "VectorIndex", FakeVectorIndex)
+
+    vector, backend = _load_vector_backend(
+        AppConfig(rag={"vector_backend": "turboquant"}),
+        tmp_path,
+        backend_name="turboquant",
+    )
+
+    assert vector is None
+    assert backend == "turboquant"
 
 
 def test_agent_analyze_wires_rag_retriever(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -390,6 +549,119 @@ def test_agent_analyze_writes_platform_experience(
     assert (store / "bm25.json").exists()
     assert len(list((store / "experiences").glob("*.md"))) == 1
     assert len(list((store / "experiences").glob("*.json"))) == 1
+
+
+def test_agent_analyze_writes_compact_platform_experience_when_enabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """agent analyze 啟用 AAAK 時會額外寫入 compact experience 檔案."""
+    anomalies_path = tmp_path / "anomalies.json"
+    anomalies_path.write_text(
+        json.dumps(
+            {
+                "resource": {"device.model": "BGW720-300"},
+                "summary": {"total_anomalies": 1, "affected_cycles": [1]},
+                "traces": [
+                    {
+                        "cycle_id": 1,
+                        "spans": [
+                            {
+                                "attributes": {
+                                    "anomaly.rule_id": "kernel_panic",
+                                    "anomaly.rule_name": "Kernel Panic",
+                                    "anomaly.severity": "critical",
+                                    "anomaly.line_number": 2,
+                                    "anomaly.message": "Kernel panic - not syncing",
+                                },
+                                "events": [],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    logfile = tmp_path / "device.log"
+    logfile.write_text(
+        "[2026-03-18 13:54:59.000] U-Boot TPL\n"
+        "[2026-03-18 13:55:00.000] Kernel panic - not syncing\n",
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "config.toml"
+    rag_root = (tmp_path / "rag-store").resolve()
+    config_path.write_text(
+        (
+            'platform = "bdk"\n'
+            "[parser]\n"
+            "aaak_enabled = true\n"
+            "[rag]\n"
+            f'index_root = "{rag_root}"\n'
+            "auto_writeback = true\n"
+            "prefer_compact_experience = true\n"
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeLLMClient:
+        def __init__(
+            self,
+            model: str = "fake",
+            api_base: str | None = None,
+            temperature: float = 0.1,
+            max_tokens: int = 4096,
+        ) -> None:
+            self._model = model
+
+        def register_tool(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def chat(
+            self,
+            messages: list[dict[str, str]],
+            system_prompt: str | None = None,
+        ) -> str:
+            return "Kernel panic root cause summary."
+
+        @property
+        def model(self) -> str:
+            return self._model
+
+    class FakeAgentToolkit:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+        def register_all(self, client: object) -> None:
+            return None
+
+    fake_llm = types.ModuleType("logsensing.agent.llm")
+    fake_llm.LLMClient = FakeLLMClient
+    fake_tools = types.ModuleType("logsensing.agent.tools")
+    fake_tools.AgentToolkit = FakeAgentToolkit
+    monkeypatch.setitem(sys.modules, "logsensing.agent.llm", fake_llm)
+    monkeypatch.setitem(sys.modules, "logsensing.agent.tools", fake_tools)
+
+    result = runner.invoke(
+        app,
+        [
+            "agent",
+            "analyze",
+            "--config",
+            str(config_path),
+            "--platform",
+            "bdk",
+            "--anomalies",
+            str(anomalies_path),
+            "--logfile",
+            str(logfile),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    store = rag_root / "bdk"
+    compact_files = list((store / "experiences").glob("*.aaak"))
+    assert len(compact_files) == 1
+    assert "EXP|fmt=aaak-log-v1|plat=bdk" in compact_files[0].read_text(encoding="utf-8")
 
 
 def test_agent_chat_loads_platform_experience_from_store(

@@ -5,6 +5,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from logsensing.analyzer.detector import AnomalyRule
 
 
 @dataclass(frozen=True)
@@ -68,6 +72,9 @@ class PlatformProfile:
 
     # Demux channel definitions
     demux_channels: list[ChannelDef] = field(default_factory=list)
+
+    # Platform-specific anomaly rules
+    anomaly_rules: list[AnomalyRule] = field(default_factory=list)
 
     # Drain3 config overrides
     drain_config: DrainOverride = field(default_factory=DrainOverride)

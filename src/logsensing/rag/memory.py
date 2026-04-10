@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from logsensing.parser.aaak import AAAKLogCompressor
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,8 @@ class ExperienceArtifact:
     rca: dict[str, Any] = field(default_factory=dict)
     evidence: dict[str, Any] = field(default_factory=dict)
     provenance: dict[str, Any] = field(default_factory=dict)
+    compact_summary: str = ""
+    compact_format: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -54,6 +59,8 @@ class ExperienceArtifact:
             "rca": self.rca,
             "evidence": self.evidence,
             "provenance": self.provenance,
+            "compact_summary": self.compact_summary,
+            "compact_format": self.compact_format,
         }
 
     def to_markdown(self) -> str:
@@ -128,11 +135,23 @@ def get_platform_rag_store(index_root: Path, platform: str) -> PlatformRagStore:
     )
 
 
-def list_experience_docs(store: PlatformRagStore) -> list[Path]:
-    """List markdown experience docs for retrieval."""
+def list_experience_docs(
+    store: PlatformRagStore,
+    *,
+    prefer_compact: bool = False,
+) -> list[Path]:
+    """List persisted experience docs for retrieval."""
     if not store.experiences_dir.exists():
         return []
-    return sorted(store.experiences_dir.glob("*.md"))
+    markdown_docs = sorted(store.experiences_dir.glob("*.md"))
+    if not prefer_compact:
+        return markdown_docs
+
+    selected_docs: list[Path] = []
+    for markdown_doc in markdown_docs:
+        compact_doc = markdown_doc.with_suffix(".aaak")
+        selected_docs.append(compact_doc if compact_doc.exists() else markdown_doc)
+    return selected_docs
 
 
 def build_experience_artifact(
@@ -146,6 +165,7 @@ def build_experience_artifact(
     generated_by: str,
     model_name: str | None = None,
     analysis_mode: str = "agent_analyze",
+    compressor: AAAKLogCompressor | None = None,
 ) -> ExperienceArtifact:
     """Build a structured experience artifact from one analysis run."""
     findings = _extract_findings(anomalies_data)
@@ -153,7 +173,7 @@ def build_experience_artifact(
     evidence = _extract_evidence(anomalies_data, drain_state)
     source_log = _build_source_log(logfile)
     fingerprint = _experience_fingerprint(platform, source_log, findings)
-    return ExperienceArtifact(
+    artifact = ExperienceArtifact(
         experience_id=f"{platform}-{fingerprint[:16]}",
         platform=platform,
         device_model=device_model or "unknown",
@@ -170,6 +190,15 @@ def build_experience_artifact(
             "confidence": "medium",
         },
     )
+    if compressor is None:
+        return artifact
+
+    compact_summary = compressor.compress_experience(artifact)
+    return replace(
+        artifact,
+        compact_summary=compact_summary,
+        compact_format=compressor.format_name,
+    )
 
 
 def write_experience_artifact(
@@ -180,7 +209,9 @@ def write_experience_artifact(
     store.ensure_dirs()
     json_path = store.experiences_dir / f"{artifact.experience_id}.json"
     md_path = store.experiences_dir / f"{artifact.experience_id}.md"
-    if json_path.exists() and md_path.exists():
+    compact_path = store.experiences_dir / f"{artifact.experience_id}.aaak"
+    compact_ready = not artifact.compact_summary or compact_path.exists()
+    if json_path.exists() and md_path.exists() and compact_ready:
         return md_path, False
 
     json_path.write_text(
@@ -188,6 +219,11 @@ def write_experience_artifact(
         encoding="utf-8",
     )
     md_path.write_text(artifact.to_markdown(), encoding="utf-8")
+    if artifact.compact_summary:
+        compact_text = artifact.compact_summary
+        if not compact_text.endswith("\n"):
+            compact_text += "\n"
+        compact_path.write_text(compact_text, encoding="utf-8")
     return md_path, True
 
 

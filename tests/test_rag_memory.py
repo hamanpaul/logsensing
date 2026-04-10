@@ -7,6 +7,7 @@ from pathlib import Path
 
 from logsensing.cli import _build_rag_retriever
 from logsensing.config import AppConfig
+from logsensing.parser.aaak import AAAKLogCompressor
 from logsensing.rag.memory import (
     build_experience_artifact,
     get_platform_rag_store,
@@ -93,6 +94,53 @@ def test_write_experience_artifact_creates_json_and_markdown(tmp_path: Path) -> 
     assert list_experience_docs(store) == [md_path]
 
 
+def test_build_experience_artifact_with_compressor_sets_compact_summary(tmp_path: Path) -> None:
+    logfile = _make_log(
+        tmp_path / "device.log",
+        ["[2026-03-18 13:54:59.000] U-Boot TPL", "[2026-03-18 13:55:00.000] panic"],
+    )
+    artifact = build_experience_artifact(
+        platform="bdk",
+        device_model="BGW720-300",
+        logfile=logfile,
+        anomalies_data=_make_anomalies("Kernel panic - not syncing"),
+        drain_state=_make_drain_state("kernel panic <*>"),
+        analysis_text="Kernel panic caused by RPC tunnel timeout.",
+        generated_by="llm",
+        compressor=AAAKLogCompressor(),
+    )
+
+    assert artifact.compact_format == "aaak-log-v1"
+    assert "EXP|fmt=aaak-log-v1|plat=bdk" in artifact.compact_summary
+    assert "F|KRN|sev=critical|rule=kernel_panic" in artifact.compact_summary
+
+
+def test_write_experience_artifact_writes_compact_file(tmp_path: Path) -> None:
+    logfile = _make_log(
+        tmp_path / "device.log",
+        ["[2026-03-18 13:54:59.000] U-Boot TPL", "[2026-03-18 13:55:00.000] panic"],
+    )
+    store = get_platform_rag_store(tmp_path, "bdk")
+    artifact = build_experience_artifact(
+        platform="bdk",
+        device_model="BGW720-300",
+        logfile=logfile,
+        anomalies_data=_make_anomalies("Kernel panic - not syncing"),
+        drain_state=_make_drain_state("kernel panic <*>"),
+        analysis_text="Kernel panic caused by RPC tunnel timeout.",
+        generated_by="llm",
+        compressor=AAAKLogCompressor(),
+    )
+
+    md_path, created = write_experience_artifact(store, artifact)
+
+    assert created is True
+    assert md_path.exists()
+    compact_path = store.experiences_dir / f"{artifact.experience_id}.aaak"
+    assert compact_path.exists()
+    assert "EXP|fmt=aaak-log-v1|plat=bdk" in compact_path.read_text(encoding="utf-8")
+
+
 def test_write_experience_artifact_deduplicates(tmp_path: Path) -> None:
     logfile = _make_log(
         tmp_path / "device.log",
@@ -143,6 +191,36 @@ def test_build_rag_retriever_reads_platform_experience(tmp_path: Path) -> None:
     assert results
     assert any(r.chunk.metadata.get("source_type") == "experience" for r in results)
     assert all(r.chunk.metadata.get("platform") == "bdk" for r in results)
+
+
+def test_build_rag_retriever_prefers_compact_experience_docs(tmp_path: Path) -> None:
+    logfile = _make_log(
+        tmp_path / "device.log",
+        ["[2026-03-18 13:54:59.000] U-Boot TPL", "[2026-03-18 13:55:00.000] panic"],
+    )
+    store = get_platform_rag_store(tmp_path, "bdk")
+    artifact = build_experience_artifact(
+        platform="bdk",
+        device_model="BGW720-300",
+        logfile=logfile,
+        anomalies_data=_make_anomalies("Kernel panic - not syncing"),
+        drain_state=_make_drain_state("kernel panic <*>"),
+        analysis_text="Kernel panic caused by RPC tunnel timeout.",
+        generated_by="llm",
+        compressor=AAAKLogCompressor(),
+    )
+    write_experience_artifact(store, artifact)
+
+    cfg = AppConfig(
+        rag={"index_root": str(tmp_path), "prefer_compact_experience": True}
+    )
+    retriever = _build_rag_retriever(cfg, platform_name="bdk", force_rebuild=True)
+
+    assert retriever is not None
+    results = retriever.search("kernel panic", top_k=3)
+    assert results
+    assert any(result.chunk.source.endswith(".aaak") for result in results)
+    assert all(result.chunk.metadata.get("source_type") == "experience" for result in results)
 
 
 def test_platform_rag_retriever_is_isolated(tmp_path: Path) -> None:
