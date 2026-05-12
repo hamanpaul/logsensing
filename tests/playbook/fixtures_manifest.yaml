@@ -19,9 +19,11 @@
       "availability": "external-env",
       "used_by": [
         "reporter-prplos-sequence-only",
-        "platform-auto-detect"
+        "platform-auto-detect",
+        "analyzer-prplos-known-anomalies",
+        "cli-analyze-prplos-known-anomalies"
       ],
-      "notes": "Not committed in the repo; needed for full prplOS end-to-end verification."
+      "notes": "Not committed in the repo; used for prplOS end-to-end verification and known-anomaly regression."
     },
     {
       "fixture_id": "synthetic-analyzer-lines",

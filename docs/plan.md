@@ -1,216 +1,113 @@
-# LogSensing 開發計畫
+# LogSensing AAAK / TurboQuant 研發 Roadmap
 
-## 專案定位
+> 本文件描述「如何把 `docs/spec.md` 落地成可平行執行的研發與驗證流程」。不描述已完成 code 細節時，應回到 `docs/spec.md` 與 `docs/task.md` 查看。
 
-全自動化日誌分析 CLI 工具，針對設備 Power Cycle 壓力測試產生的巨量、多執行緒交錯日誌進行解析。
-結合 Drain3 動態日誌探勘與 LLM Agent，將除錯流程從「人工搜尋」升級為「AI 自動根因診斷」。
+## 0. 目前狀態
 
-## 技術決策
+- P0 已完成：文件鏈與 README 索引已對齊。
+- P1 已完成：AAAK contract、template/finding summary、`parse` 的 `templates.aaak` 匯出已落地。
+- P2 已完成：experience `.aaak` writeback、`prefer_compact_experience` 與 RAG wiring 已落地。
+- P3 進行中：paper-derived `TurboQuantVectorIndex`、metadata、save/load、HybridRetriever wiring 與 fallback 已有 prototype，但 benchmark / quality gate 尚未完成。
 
-| 項目 | 決策 |
-|------|------|
-| 語言 | Python 3.10+ |
-| 專案結構 | src layout（`src/logsensing/`） |
-| 建置工具 | pyproject.toml + uv |
-| CLI 框架 | Typer |
-| 日誌探勘 | Drain3 |
-| 異常輸出 | OpenTelemetry JSON |
-| LLM 整合 | Function Calling（模型可抽換） |
-| 檢索引擎 | BM25 + FAISS（進階里程碑） |
+## 1. Roadmap 目標
 
-## 目前進度（2026-03-31）
+本 roadmap 的核心目標是：
 
-- [x] Phase 1 Parser：Boot cycle 切割、Drain3 模板探勘、Demux 分流
-- [x] Phase 2 Analyzer：Baseline、Anomaly Detector、OTel Exporter、Boot timing report
-- [x] 多平台抽象：BDK / prplOS profile、自動偵測、sequence-only timing 分析
-- [x] Phase 3 Agent：`agent analyze` / `agent chat` 已可讀 anomaly、baseline、drain state、原始 log
-- [x] Sprint 4 RAG 核心：chunker / BM25 / FAISS / RRF hybrid retriever
-- [x] RAG CLI 整合：`agent analyze` / `agent chat` 已可從 `--knowledge-doc` 或 config 建立/載入索引
-- [x] 平台感知 RAG 記憶：依 log 自動判斷平台、載入同平台 docs/experiences、分析後自動回寫結構化經驗
-- [x] 測試現況：189 tests passing，ruff clean
+1. 以文件先行，鎖定 AAAK / TurboQuant 的技術邊界
+2. 讓後續 `/fleet` 可以依 lane 平行實作
+3. 讓 `/agent`、`/review`、`conventional-commit` 的交接點可直接從文件執行
 
-### RAG 整合策略
+## 2. 前置條件
 
-- CLI 優先讀取既有索引：`--bm25-index` / `--faiss-index`
-- 若索引不存在且提供 `--knowledge-doc`（或 config `rag.knowledge_docs`），則現場切塊並建立索引
-- 向量相依不存在時，自動降級為 BM25-only，保持 agent 功能可用
-- `agent analyze` 與 `agent chat` 共用同一組 RAG helper，避免行為漂移
-- 預設以 `.cache/logsensing/rag/<platform>/` 隔離不同平台索引與經驗，避免混庫
-- `agent analyze` 只回寫結構化 RCA/證據摘要，不保存完整 raw log 或整段對話
-- 回寫後會 deterministic rebuild 該平台索引，讓下次同平台分析能直接檢索既有經驗
+- 整合分支：`feat/aaak-turboquant-foundation`
+- 既有 docs 採 **增量修訂**，但需修正所有已與 code behavior 脫節的描述
+- TurboQuant 僅採 paper-derived implementation；GPL repo 只用於理解，不進 source tree
 
-## 樣本日誌分析
+## 3. Phase 規劃
 
-**檔案：** `docs/sample_logs/20260318_ATT_newHW7-normal_1354.log`（7MB, 113,105 行）
-**裝置：** BGW720-300 (Broadcom BCM68575_B0, ARM Cortex A53 Dual Core)
-**狀態：** 正常開機（無 Kernel panic / OOM）
-**Boot Cycles：** 25 次（以 `U-Boot TPL` 為錨點計數）
+| Phase | 目標 | 主要輸出 | 進入條件 | 退出條件 |
+|---|---|---|---|---|
+| P0 文件基線 | 完成 spec/test/plan/task/todo 文件鏈 | `docs/spec.md` `docs/test.md` `docs/plan.md` `docs/task.md` `docs/todo.md` | 研究結論已固定 | 文件鏈命名一致、README 已連結 |
+| P1 AAAK parser core | 落地 parser / template / experience 的 compact summary 能力 | `parser/aaak.py`、config、unit tests | P0 完成 | raw path 保留、AAAK 關閉時行為等同現況 |
+| P2 AAAK experience / RAG wiring | 將 compact summary 接進 experience writeback 與 chunking | memory / chunker / CLI wiring | P1 完成 | writeback 與 platform isolation 測試通過 |
+| P3 TurboQuant backend | 以論文核心技術重作向量壓縮 backend | quantization module、backend metadata、驗證基線 | P0 完成；P1/P2 可並行後接 | 可回退到 float32 / BM25-only，且 quality gate 明確 |
+| P4 驗證與收斂 | 完成整體驗證、review、commit、merge 收斂 | 測試報告、review report、commit history | P1~P3 完成 | 測試通過、review blocker 清空、文件與 code 對齊 |
 
-### 日誌格式
+## 4. Fleet lane 切分
 
-```
-[YYYY-MM-DD HH:MM:SS.mmm] <message>
-```
+> `/fleet` 應依「source ownership + validation ownership」切 lane，不建議只用單一文件或單一檔案拆分。
 
-時間戳為測試主機側（非裝置內部 uptime），毫秒精度。
+| Lane | 建議分支 | 範圍 | 主要輸出 |
+|---|---|---|---|
+| Parser / AAAK | `fleet/parser-aaak` | parser summary、entity map、config、parser tests | AAAK core + parser regression tests |
+| Experience / RAG wiring | `fleet/experience-rag-wiring` | memory / chunker / retriever wiring | compact summary writeback + retrieval wiring |
+| TurboQuant core | `fleet/rag-turboquant-core` | paper-derived quantization backend、vector metadata、load/save | 壓縮後端與 fallback path |
+| Validation / Benchmark | `fleet/validation-bench` | golden queries、benchmark harness、test evidence | 品質與資源使用報告 |
+| CLI / Docs / Integration | `fleet/cli-docs-integration` | CLI wiring、README、docs cross-check、release notes | 使用方式與文件一致性 |
 
-### 已識別錨點字串
+## 5. Lane 依賴規則
 
-| 錨點 | 用途 | 出現次數 |
-|------|------|----------|
-| `U-Boot TPL` | Boot Cycle 切割主錨點 | 25 |
-| `Starting kernel ...` | Kernel 交接 | 24 |
-| `Booting Linux` | Linux 啟動 | 24 |
+1. `Parser / AAAK` 與 `TurboQuant core` 可在 P0 後平行推進。
+2. `Experience / RAG wiring` 依賴 AAAK summary contract 穩定。
+3. `Validation / Benchmark` 必須在各 lane 有可執行 prototype 後開始收斂。
+4. `CLI / Docs / Integration` 應持續跟進，但最後 merge 前必須完成一次全量對齊。
 
-### 已識別開機里程碑
+## 6. `/agent`、`/review`、commit workflow
 
-| 順序 | 里程碑 | 匹配模式 |
-|------|--------|----------|
-| 1 | TPL 啟動 | `U-Boot TPL` |
-| 2 | U-Boot 主程式 | `U-Boot 2024.04` |
-| 3 | Watchdog 啟動 | `WDT:   Started watchdog` |
-| 4 | FIT Image 載入 | `Found FIT format U-Boot` |
-| 5 | Kernel 交接 | `Starting kernel ...` |
-| 6 | Linux 啟動 | `Booting Linux on physical CPU` |
-| 7 | RPC Tunnel 完成 | `Init complete for FIFO tunnel` |
-| 8 | PCIe Link UP | `bcm-pcie: Core .* Link UP` |
-| 9 | 網路設定 | `Configuring networking...` |
-| 10 | Ethernet 就緒 | `wait_enet_ready done` |
-| 11 | WiFi FW 載入 | `dhd_bus_start_try download fw` |
+### 6.1 `/agent`
 
-### 已識別模組前綴（Demux 頻道）
+- 依 `docs/test.md` 執行指定測試層：
+  - unit
+  - functional
+  - integration
+  - boundary / stress
+- 產出：
+  - 執行命令
+  - 成功 / 失敗案例
+  - 與基線差異
 
-| 模組 | 出現次數 | 分類 |
-|------|----------|------|
-| `wl0` / `wl1` / `wl2` | ~3,400 | WiFi |
-| `RPC` | 1,150 | 跨核心 RPC |
-| `SMCOS` | 1,098 | SMC OS |
-| `SBF` | 781 | Switch Buffer |
-| `acsd` | 507 | ACS Daemon |
-| `dhd*` / `dhdpcie*` | ~600 | DHD Driver |
-| `dol0` / `dol1` / `dol2` | ~495 | Offload Engine |
-| `fcache` | 144 | Flow Cache |
+### 6.2 `/review`
 
-### 已識別錯誤模式
+- 針對每條 lane 的 source diff 做 review
+- 輸出：
+  - blocker
+  - non-blocker
+  - 風險與建議回補測試
+- review blocker 未清空前，不進入 commit / push
 
-| 模式 | 嚴重性 | 說明 |
-|------|--------|------|
-| `CFG80211-ERROR` | warning | WiFi vendor IE 設定錯誤（-19），每個 cycle 重複出現 |
-| `bcm_sotp_ctl_perm.*error` | info | SOTP 控制不支援，U-Boot 階段正常出現 |
-| `Kernel panic` | critical | 本樣本未出現（正常開機） |
-| `Out of memory` / `oom` | critical | 本樣本未出現 |
+### 6.3 `/agent` + `conventional-commit`
 
-## 三階段管線架構
+- 在測試通過、review blocker 清空後，依實際 diff 產生 commit message
+- commit message 必須對應 lane 與 change scope
+- push 前需再次確認目標 branch 與文件版本同步
 
-```
-Raw Log ──▶ [Phase 1: Parser] ──▶ [Phase 2: Analyzer] ──▶ [Phase 3: Agent CLI]
-              │                      │                       │
-              ├─ Stream Splitter     ├─ Baseline Profiling   ├─ Automated RCA
-              ├─ Drain3 模板探勘     ├─ Anomaly Detection    ├─ Interactive Q&A
-              └─ Demultiplexing      └─ OTel JSON 輸出       └─ RAG 檢索（進階）
-```
+## 7. Merge Gate
 
-## 開發里程碑
+每個 lane merge 前至少要滿足：
 
-### Sprint 1：基礎設施與 Drain3 導入
+1. 對應 `docs/task.md` 任務完成
+2. 對應 `docs/todo.md` 細項完成
+3. `docs/test.md` 指定的必要測試有結果
+4. `/review` blocker 已清空
+5. README / spec / test / plan / task / todo 沒有明顯 drift
 
-**目標：** 實作日誌串流讀取、切割邏輯，並串接 Drain3 進行日誌模板初步訓練與解析。
+## 8. 風險與 rollback
 
-- [ ] 專案骨架搭建（pyproject.toml、目錄結構、CI lint）
-- [ ] Stream Splitter：以 Bootloader 錨點字串切割巨型日誌為單一 Boot Cycle 區塊
-- [ ] Drain3 整合：動態模板探勘，產出模板對照表
-- [ ] Demultiplexer：依 PID / 模組前綴分流至虛擬頻道
-- [ ] 單元測試與整合測試基礎
+| 風險 | 影響 | 對策 |
+|---|---|---|
+| AAAK 摘要品質不足 | LLM / RAG 可讀性下降 | 預設關閉；保留 raw path；先做 quality gate |
+| TurboQuant 品質不穩 | retrieval 退化 | 先 paper-derived prototype；保留 float32 backend；以 benchmark gate 決定是否啟用 |
+| lane 邊界重疊過多 | merge 衝突 | 先在 `docs/task.md` / `docs/todo.md` 固定 owner 與輸出 |
+| 文件晚於程式更新 | doc drift | README 與 docs 視為 merge gate 一部分 |
+| 授權邊界不清 | 法務風險 | 每份文件都要重申 paper-only / no GPL code import |
 
-**交付物：** `parser.py` 模組 + 日誌模板對照表
+## 9. P0 完成定義
 
-### Sprint 2：規則引擎與標準化輸出
+P0 被視為完成，需同時滿足：
 
-**目標：** 建立時間軸運算、多執行緒分流，將異常轉為 OTel 標準 JSON。
-
-- [ ] Baseline Profiling：計算正常開機各里程碑平均 Delta Time
-- [ ] Anomaly Detector：時間容忍閥值 + 致命錯誤規則庫（Kernel panic 等）
-- [ ] Context Clipper：錯誤命中後裁切前後 N 行乾淨日誌
-- [ ] OTel Exporter：TraceID / SpanID 賦值，輸出 `anomalies.json`
-- [ ] 規則引擎測試
-
-**交付物：** `analyzer.py` 模組 + `anomalies.json` 樣本
-
-### Sprint 3：CLI 封裝與 Agent 整合
-
-**目標：** 建立命令列介面，透過 Function Calling 串接 LLM API 產出 RCA 報告。
-
-- [x] Typer CLI 封裝（parse / analyze / agent 子命令）
-- [x] LLM Agent：讀取 anomalies.json 自動撰寫 RCA 摘要
-- [x] Interactive Q&A：終端機互動式問答介面
-- [x] 組態管理（config.toml / 環境變數）
-- [x] 端到端測試
-
-**交付物：** `agent_cli.py` + 自動化 RCA 摘要報告
-
-### Sprint 4：混合 RAG 知識庫
-
-**目標：** 硬體規格書語意切塊，建立雙軌檢索引擎強化 Agent 領域知識。
-
-- [x] 文件切塊器（Markdown / Text → chunks）
-- [x] BM25 精準匹配索引
-- [x] FAISS 向量語意檢索
-- [x] 混合檢索 API（融合排序）
-- [x] Agent 知識庫整合
-
-**交付物：** 向量資料庫建置 + 混合檢索 API
-
-## 專案目錄結構
-
-```
-logsensing/
-├── README.md
-├── pyproject.toml
-├── uv.lock
-├── docs/
-│   ├── logsensing-agent-dev.md   # 原始開發計畫書
-│   ├── plan.md                   # 本檔：開發計畫
-│   ├── spec.md                   # 技術規格
-│   └── todo.md                   # 開發待辦追蹤
-├── src/
-│   └── logsensing/
-│       ├── __init__.py
-│       ├── cli.py                # Typer CLI 入口
-│       ├── parser/
-│       │   ├── __init__.py
-│       │   ├── splitter.py       # Stream Splitter
-│       │   ├── drain.py          # Drain3 整合
-│       │   └── demux.py          # Demultiplexer
-│       ├── analyzer/
-│       │   ├── __init__.py
-│       │   ├── baseline.py       # Baseline Profiling
-│       │   ├── detector.py       # Anomaly Detector
-│       │   ├── clipper.py        # Context Clipper
-│       │   └── exporter.py       # OTel Exporter
-│       ├── agent/
-│       │   ├── __init__.py
-│       │   ├── rca.py            # Root Cause Analysis
-│       │   ├── interactive.py    # Interactive Q&A
-│       │   └── rag.py            # RAG 檢索（進階）
-│       └── config.py             # 組態管理
-├── tests/
-│   ├── conftest.py
-│   ├── test_splitter.py
-│   ├── test_drain.py
-│   ├── test_demux.py
-│   ├── test_baseline.py
-│   ├── test_detector.py
-│   ├── test_exporter.py
-│   └── test_cli.py
-└── samples/                      # 測試用日誌樣本
-    └── README.md
-```
-
-## 風險與備案
-
-| 風險 | 影響 | 備案 |
-|------|------|------|
-| Drain3 模板品質不足 | Phase 1 產出不可靠 | 混合 Regex 前處理 + Drain3 後處理 |
-| 日誌格式跨韌體版本差異過大 | 切檔錨點失效 | 可設定多錨點 fallback 策略 |
-| LLM API 延遲 / 成本 | Phase 3 體驗差 | 支援本地模型（Ollama）替代 |
-| 巨型日誌 OOM | Phase 1 崩潰 | 串流處理 + 記憶體上限保護 |
+- `docs/spec.md` 明確區分現況與規劃新增
+- `docs/test.md` 已有 test matrix 與驗證命令
+- `docs/plan.md` 已定義 phase 與 fleet lane
+- `docs/task.md` 已定義任務、owner、DoD
+- `docs/todo.md` 已細化到可直接派工
+- README 已能導到完整文件集

@@ -8,6 +8,7 @@ import pytest
 
 SAMPLE_LOG_DIR = Path(__file__).parent.parent / "docs" / "sample_logs"
 SAMPLE_LOG = SAMPLE_LOG_DIR / "20260318_ATT_newHW7-normal_1354.log"
+PRPLOS_EXTERNAL_LOG = Path.home() / "b-log" / "mini_COM1_260327-154959.log"
 
 
 @pytest.fixture
@@ -33,3 +34,9 @@ def single_cycle_lines() -> list[str]:
             lines = f.readlines()
         return lines[3274:8434]
     return []
+
+
+@pytest.fixture
+def prplos_external_log_path() -> Path:
+    """回傳外部 prplOS b-log 路徑."""
+    return PRPLOS_EXTERNAL_LOG

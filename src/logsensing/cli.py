@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from logsensing.parser.splitter import StreamSplitter
     from logsensing.platform.base import PlatformProfile
     from logsensing.rag.chunker import Chunk
-    from logsensing.rag.retriever import HybridRetriever
+    from logsensing.rag.retriever import HybridRetriever, VectorSearchBackend
 
 app = typer.Typer(name="logsensing", help="系統日誌自動化分析與 AI 診斷工具", no_args_is_help=True)
 console = Console()
@@ -205,7 +205,10 @@ def _build_rag_retriever(
     experience_docs: list[Path] = []
     if platform_name:
         store = get_platform_rag_store(Path(cfg.rag.index_root), platform_name)
-        experience_docs = list_experience_docs(store)
+        experience_docs = list_experience_docs(
+            store,
+            prefer_compact=cfg.rag.prefer_compact_experience,
+        )
 
     doc_paths = _resolve_knowledge_docs(cfg, knowledge_docs, platform_name=platform_name)
     source_paths: list[Path] = []
@@ -232,6 +235,7 @@ def _build_rag_retriever(
 
     bm25 = None
     vector = None
+    backend_name = cfg.rag.vector_backend.lower().strip()
 
     if not force_rebuild and bm25_path is not None and bm25_path.exists():
         try:
@@ -243,18 +247,13 @@ def _build_rag_retriever(
             raise typer.Exit(code=1) from exc
 
     if not force_rebuild and faiss_path is not None and faiss_path.exists():
-        from logsensing.rag.vector import VectorIndex
-
-        candidate = VectorIndex()
-        if candidate.is_available:
-            candidate.load(faiss_path)
-            vector = candidate
-            console.print(f"[dim]已載入 FAISS 索引: {faiss_path}[/dim]")
-        else:
-            console.print(
-                "[yellow]向量檢索相依未安裝，略過 FAISS 載入。"
-                "安裝方式: uv sync --extra rag[/yellow]"
-            )
+        vector, vector_backend = _load_vector_backend(
+            cfg,
+            faiss_path,
+            backend_name=backend_name,
+        )
+        if vector is not None:
+            console.print(f"[dim]已載入向量索引 ({vector_backend}): {faiss_path}[/dim]")
 
     if source_paths and (force_rebuild or bm25 is None or vector is None):
         chunks = _chunk_knowledge_docs(
@@ -282,19 +281,15 @@ def _build_rag_retriever(
                     console.print(f"[dim]已儲存 BM25 索引: {bm25_path}[/dim]")
 
             if force_rebuild or vector is None:
-                from logsensing.rag.vector import VectorIndex
-
-                candidate = VectorIndex()
-                if candidate.is_available:
-                    candidate.build(chunks)
-                    vector = candidate
-                    if faiss_path is not None:
-                        candidate.save(faiss_path)
-                        console.print(f"[dim]已儲存 FAISS 索引: {faiss_path}[/dim]")
-                else:
+                vector, vector_backend = _build_vector_backend(
+                    cfg,
+                    chunks,
+                    backend_name=backend_name,
+                )
+                if vector is not None and faiss_path is not None:
+                    vector.save(faiss_path)
                     console.print(
-                        "[yellow]向量檢索相依未安裝，RAG 降級為 BM25-only。"
-                        "安裝方式: uv sync --extra rag[/yellow]"
+                        f"[dim]已儲存向量索引 ({vector_backend}): {faiss_path}[/dim]"
                     )
 
     if bm25 is None and vector is None:
@@ -307,6 +302,84 @@ def _build_rag_retriever(
         backends.append("Vector")
     console.print(f"[green]✓ RAG 知識庫已啟用 ({' + '.join(backends)})[/green]")
     return HybridRetriever(bm25=bm25, vector=vector)
+
+
+def _load_vector_backend(
+    cfg: AppConfig,
+    path: Path,
+    *,
+    backend_name: str,
+) -> tuple[VectorSearchBackend | None, str]:
+    if backend_name == "turboquant":
+        from logsensing.rag.turboquant import TurboQuantVectorIndex
+
+        candidate = TurboQuantVectorIndex(
+            bit_width=cfg.rag.vector_compression_bits,
+            rotation_seed=cfg.rag.vector_rotation_seed,
+        )
+        if candidate.is_available:
+            try:
+                candidate.load(path)
+                return candidate, "turboquant"
+            except (FileNotFoundError, ValueError):
+                console.print(
+                    "[yellow]TurboQuant 索引載入失敗，將在需要時重建或回退其他後端。[/yellow]"
+                )
+        else:
+            console.print(
+                "[yellow]TurboQuant 向量相依未安裝，嘗試回退 FAISS 載入。[/yellow]"
+            )
+
+    from logsensing.rag.vector import VectorIndex
+
+    fallback = VectorIndex()
+    if fallback.is_available:
+        try:
+            fallback.load(path)
+            return fallback, "faiss"
+        except (FileNotFoundError, ValueError, KeyError):
+            console.print(
+                "[yellow]FAISS 索引載入失敗，將在需要時重建索引。[/yellow]"
+            )
+    console.print(
+        "[yellow]向量檢索相依未安裝，略過 FAISS 載入。"
+        "安裝方式: uv sync --extra rag[/yellow]"
+    )
+    return None, backend_name
+
+
+def _build_vector_backend(
+    cfg: AppConfig,
+    chunks: list[Chunk],
+    *,
+    backend_name: str,
+) -> tuple[VectorSearchBackend | None, str]:
+    if backend_name == "turboquant":
+        from logsensing.rag.turboquant import TurboQuantVectorIndex
+
+        compressed = TurboQuantVectorIndex(
+            bit_width=cfg.rag.vector_compression_bits,
+            rotation_seed=cfg.rag.vector_rotation_seed,
+        )
+        if compressed.is_available:
+            compressed.build(chunks)
+            return compressed, "turboquant"
+        console.print(
+            "[yellow]TurboQuant 向量相依未安裝，嘗試回退 FAISS backend。[/yellow]"
+        )
+
+    from logsensing.rag.vector import VectorIndex
+
+    fallback = VectorIndex()
+    if fallback.is_available:
+        fallback.build(chunks)
+        return fallback, "faiss"
+
+    console.print(
+        "[yellow]向量檢索相依未安裝，RAG 降級為 BM25-only。"
+        "安裝方式: uv sync --extra rag[/yellow]"
+    )
+    return None, backend_name
 
 
 def _load_cycle_log_lines(
@@ -361,6 +434,14 @@ def _write_platform_experience(
 
     store = get_platform_rag_store(Path(cfg.rag.index_root), platform_name)
     device_model = anomalies_data.get("resource", {}).get("device.model", "unknown")
+    compressor = None
+    if cfg.parser.aaak_enabled:
+        from logsensing.parser.aaak import AAAKLogCompressor
+
+        compressor = AAAKLogCompressor(
+            cfg.parser.aaak_entity_map,
+            max_summary_items=cfg.parser.aaak_max_summary_items,
+        )
     artifact = build_experience_artifact(
         platform=platform_name,
         device_model=device_model,
@@ -370,6 +451,7 @@ def _write_platform_experience(
         analysis_text=analysis_text,
         generated_by=generated_by,
         model_name=model_name,
+        compressor=compressor,
     )
     md_path, created = write_experience_artifact(store, artifact)
     if created:
@@ -471,6 +553,18 @@ def parse(
     drain.save_state(state_path)
     console.print(f"[green]✓ Drain3 狀態已儲存至 {state_path}[/green]")
     n_tpl = len(drain.get_templates())
+    if cfg.parser.aaak_enabled:
+        from logsensing.parser.aaak import AAAKLogCompressor
+
+        compressor = AAAKLogCompressor(
+            cfg.parser.aaak_entity_map,
+            max_summary_items=cfg.parser.aaak_max_summary_items,
+        )
+        compact_templates = compressor.compress_templates(drain.get_templates())
+        if compact_templates:
+            compact_path = output / "templates.aaak"
+            compact_path.write_text(f"{compact_templates}\n", encoding="utf-8")
+            console.print(f"[green]✓ AAAK 模板摘要已儲存至 {compact_path}[/green]")
     console.print(f"[green]✓ 共 {len(cycles)} 個 cycles，{n_tpl} 個模板[/green]")
 
 

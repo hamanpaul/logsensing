@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from logsensing.analyzer.detector import AnomalyRule
 from logsensing.platform.base import (
     ChannelDef,
     DrainOverride,
@@ -128,6 +129,64 @@ PRPLOS_PROFILE = PlatformProfile(
         ChannelDef(
             name="offload",
             patterns=["dol0", "dol1", "dol2", "fcache"],
+        ),
+    ],
+    anomaly_rules=[
+        AnomalyRule(
+            rule_id="boot_timeout",
+            name="Boot Timeout",
+            severity="critical",
+            rule_type="pattern",
+            pattern="Boot timeout",
+        ),
+        AnomalyRule(
+            rule_id="phy_lookup_failed",
+            name="PHY Lookup Failed",
+            severity="warning",
+            rule_type="pattern",
+            pattern="Failed to find phy for port",
+        ),
+        AnomalyRule(
+            rule_id="overlayfs_inode_failure",
+            name="OverlayFS Inode Failure",
+            severity="critical",
+            rule_type="pattern",
+            pattern="overlayfs: failed to get inode",
+        ),
+        AnomalyRule(
+            rule_id="gpio_probe_failed",
+            name="GPIO Expander Probe Failed",
+            severity="warning",
+            rule_type="pattern",
+            pattern="pca953x: probe of",
+        ),
+        AnomalyRule(
+            rule_id="watchdog_device_busy",
+            name="Watchdog Device Busy",
+            severity="warning",
+            rule_type="pattern",
+            pattern="Could not open /dev/watchdog",
+        ),
+        AnomalyRule(
+            rule_id="regulatory_db_missing",
+            name="Regulatory DB Missing",
+            severity="warning",
+            rule_type="pattern",
+            pattern="failed to load regulatory.db",
+        ),
+        AnomalyRule(
+            rule_id="cfg80211_error",
+            name="CFG80211 Error",
+            severity="warning",
+            rule_type="pattern",
+            pattern="CFG80211-ERROR",
+        ),
+        AnomalyRule(
+            rule_id="fatal_signal",
+            name="Unexpected Fatal Signal",
+            severity="critical",
+            rule_type="pattern",
+            pattern="potentially unexpected fatal signal",
         ),
     ],
     # --- Drain config ---

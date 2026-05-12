@@ -14,6 +14,7 @@ from logsensing.analyzer.baseline import (
     MilestoneHit,
 )
 from logsensing.analyzer.detector import AnomalyDetector, AnomalyRule
+from logsensing.platform.prplos import PRPLOS_PROFILE
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -179,6 +180,22 @@ class TestPatternDetection:
         anomalies = detector.detect(lines, cycle_id=0)
         assert any(a.rule_id == "watchdog_reset" for a in anomalies)
 
+    def test_prplos_platform_rules(self) -> None:
+        lines = [
+            "Boot timeout 159s\n",
+            "overlayfs: failed to get inode (-116)\n",
+            "CFG80211-ERROR) wl_allocate_wowl_config : Wowl not supported (-23)\n",
+            "potentially unexpected fatal signal 6.\n",
+        ]
+        detector = AnomalyDetector.from_platform(PRPLOS_PROFILE)
+        anomalies = detector.detect(lines, cycle_id=3)
+        rule_ids = {anomaly.rule_id for anomaly in anomalies}
+
+        assert "boot_timeout" in rule_ids
+        assert "overlayfs_inode_failure" in rule_ids
+        assert "cfg80211_error" in rule_ids
+        assert "fatal_signal" in rule_ids
+
 
 # ---------------------------------------------------------------------------
 # AnomalyDetector — context clipping
@@ -322,3 +339,23 @@ class TestIntegration:
         anomalies = detector.detect(cycle_lines, cycle_id=1)
         critical = [a for a in anomalies if a.severity == "critical"]
         assert len(critical) == 0, f"unexpected critical anomalies: {critical}"
+
+    @pytest.mark.skipif(
+        not (Path.home() / "b-log" / "mini_COM1_260327-154959.log").exists(),
+        reason="prplOS b-log not available",
+    )
+    def test_detect_prplos_external_log_has_known_anomalies(self) -> None:
+        """真實 prplOS b-log 應能命中已知 error signatures."""
+        external_log = Path.home() / "b-log" / "mini_COM1_260327-154959.log"
+        with open(external_log, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+
+        detector = AnomalyDetector.from_platform(PRPLOS_PROFILE)
+        anomalies = detector.detect(lines, cycle_id=0)
+        rule_ids = {anomaly.rule_id for anomaly in anomalies}
+
+        assert "boot_timeout" in rule_ids
+        assert "phy_lookup_failed" in rule_ids
+        assert "overlayfs_inode_failure" in rule_ids
+        assert "cfg80211_error" in rule_ids
+        assert "fatal_signal" in rule_ids

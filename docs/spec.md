@@ -1,415 +1,233 @@
 # LogSensing 技術規格書
 
-## 1. 系統總覽
+> 文件定位：本文件同時描述 **目前已實作基線** 與 **AAAK / TurboQuant 增量規劃**。凡標示為「規劃新增」者，代表尚未落地到 source code，不應被視為現況功能。
 
-LogSensing 是一套三階段管線（Pipeline）日誌分析工具，處理流程：
+## 1. 文件目標
 
-```
-原始日誌 → Parser → Analyzer → Agent CLI → RCA 報告
-```
+LogSensing 目前已具備完整的三階段日誌分析管線：
 
-### 1.1 設計約束
+1. **Parser**：切割 boot cycle、Drain3 模板探勘、模組分流
+2. **Analyzer**：baseline、規則式異常偵測、OTel JSON 輸出
+3. **Agent + RAG**：LLM RCA、互動式問答、BM25 + FAISS 混合檢索、platform-scoped experience writeback
 
-- **Python 3.10+**，使用型別標註與 `match` 語法
-- **串流優先**：所有 Phase 1 操作必須支援串流處理，避免將整份日誌載入記憶體
-- **可插拔架構**：各模組透過明確介面解耦，便於獨立測試與替換
-- **OTel 標準輸出**：異常資料採用 OpenTelemetry 語意標準
+本次規格增量的目標，是在不破壞既有行為下，為後續導入兩個能力建立明確邊界：
 
----
+- **AAAK**：作為 parser / experience 的可選式壓縮摘要能力
+- **TurboQuant**：作為 RAG 向量壓縮後端的論文導向實作方向
 
-## 2. Phase 1：Parser & Normalizer
+## 2. 現況基線
 
-### 2.1 Stream Splitter
+### 2.1 已實作能力
 
-**職責：** 將巨型日誌檔按 Boot Cycle 切割為獨立區塊。
+| Surface | 目前行為 | 主要檔案 |
+|---|---|---|
+| Parser | `StreamSplitter` 切 boot cycle；`DrainParser` 產生 `ParsedLine` / `LogTemplate`；`Demultiplexer` 依 module 分流；AAAK 可選輸出 `templates.aaak` 模板摘要 | `src/logsensing/parser/splitter.py` `src/logsensing/parser/drain.py` `src/logsensing/parser/demux.py` `src/logsensing/parser/aaak.py` |
+| Analyzer | baseline profiling、pattern/timeout/sequence anomaly detection、OTel exporter，並支援平台特定 signature rule（含 prplOS b-log 常見 boot/storage/wifi error） | `src/logsensing/analyzer/` `src/logsensing/platform/prplos.py` |
+| Agent | `agent analyze`、`agent chat`、LLM fallback | `src/logsensing/agent/` |
+| RAG | `DocumentChunker`、`BM25Index`、`VectorIndex`、`TurboQuantVectorIndex`、`HybridRetriever`、platform experience writeback，並支援 **compact experience 優先讀取** 與可切換向量 backend | `src/logsensing/rag/chunker.py` `bm25.py` `vector.py` `turboquant.py` `retriever.py` `memory.py` |
+| Config | 目前已有 parser / drain / analyzer / agent / rag 組態，且已加入 AAAK 相關設定、compact experience 讀取偏好，以及 vector backend 相關設定 | `src/logsensing/config.py` |
 
-**介面定義：**
+### 2.2 已知現況限制
 
-```python
-@dataclass
-class BootCycle:
-    cycle_id: int
-    start_offset: int          # 檔案位元組偏移
-    end_offset: int
-    start_line: int
-    end_line: int
-    anchor_line: str           # 觸發切割的錨點行
-    timestamp_start: datetime | None
-    timestamp_end: datetime | None
+1. `TurboQuantVectorIndex` 已落地基礎版，但仍缺 golden query benchmark、資源量測與預設開啟判準；預設 backend 仍為 `faiss`。
+2. `ExperienceArtifact` 已可額外輸出 AAAK-style compact summary，`parse` 也可額外輸出 `templates.aaak`；`analyze` 與 Agent prompt 尚未直接使用 parser summary。
+3. 已有 AAAK feature flag、compact experience 讀取偏好，以及向量 backend 切換設定；但完整 quality-gate 與 benchmark 設定尚未落地。
+4. README 與既有 docs 仍需持續區分「目前已實作」與「後續規劃」。
 
-class StreamSplitter:
-    def __init__(self, anchors: list[str], encoding: str = "utf-8"):
-        """
-        anchors: Bootloader 錨點字串清單（任一命中即切割）
-        """
-        ...
+## 3. 規格增量目標
 
-    def split(self, stream: IO[bytes]) -> Iterator[BootCycle]:
-        """串流式切割，yield 每個 Boot Cycle 元資料"""
-        ...
+### 3.1 AAAK 導入目標
 
-    def read_cycle(self, path: Path, cycle: BootCycle) -> Iterator[str]:
-        """依 offset 讀取指定 cycle 的日誌行"""
-        ...
-```
+AAAK 在本專案中的定位，不是用來取代 raw log，而是提供一層 **可選的結構化摘要**，優先應用於：
 
-**錨點策略：**
-- 預設主錨點：`"U-Boot TPL"` — 實測每個 Boot Cycle 開頭首次出現
-- 備用錨點：`"Starting kernel"`, `"Booting Linux"`
-- 支援正則表達式錨點
-- 多錨點 fallback：依序嘗試，首個命中者為準
+- parser 產出的模板摘要
+- `ExperienceArtifact` 的壓縮版本（**基礎版已落地**）
+- RAG 上下文與 LLM context window 的 token 壓縮
 
-**實測日誌格式（BGW720-300）：**
-```
-[YYYY-MM-DD HH:MM:SS.mmm] <message>
-```
-時間戳為測試主機側，毫秒精度。每行以 `[timestamp] ` 開頭。
+目前已落地範圍：
 
-**記憶體保護：**
-- 單一 cycle 行數上限：可設定（預設 100,000 行）
-- 超限時截斷並標記 `truncated=True`
+- `AAAKLogCompressor`
+- `ExperienceArtifact.compact_summary`
+- `.aaak` compact 檔案持久化
+- `parse` 指令輸出 `templates.aaak` 模板摘要
+- `rag.prefer_compact_experience = true` 時，RAG 會優先讀 compact experience
 
-### 2.2 Drain3 整合
+尚未落地範圍：
 
-**職責：** 動態探勘日誌模板，剝離常數模板與動態參數。
+- `analyze` 指令直接輸出 AAAK parser summary
+- AAAK summary 作為 Agent prompt 的預設輸入
 
-**介面定義：**
+### 3.2 TurboQuant 導入目標
 
-```python
-@dataclass
-class LogTemplate:
-    template_id: int
-    template: str              # 如 "eth0: link <*> speed <*>"
-    count: int                 # 命中次數
-    cluster_id: int
+TurboQuant 在本專案中的定位，不是直接引用外部 GPL repo，而是：
 
-@dataclass
-class ParsedLine:
-    raw: str
-    template_id: int
-    template: str
-    params: dict[str, str]     # 動態參數鍵值對
-    timestamp: datetime | None
-    pid: int | None
-    module: str | None
+- 萃取論文核心技術與資料流設計
+- 重新實作本專案可接受的向量壓縮後端
+- 保持與既有 `VectorIndex.search()` / `HybridRetriever` 相容
 
-class DrainParser:
-    def __init__(self, config: DrainConfig | None = None):
-        ...
+### 3.3 授權與來源邊界
 
-    def parse_line(self, line: str) -> ParsedLine:
-        """解析單行日誌"""
-        ...
+| 主題 | 規格要求 |
+|---|---|
+| AAAK | 研究可參考 `mempalace` 的格式與思路；若採納 code pattern，需保持與本專案 MIT 邊界相容 |
+| TurboQuant | **只取論文核心技術**；GitHub GPL-3.0 repo 只作為理解基礎，不可直接移植、複製或 vendor 進本 repo |
+| 文件表述 | 必須明講「paper-derived / paper-only implementation」，避免產生授權污染誤解 |
 
-    def parse_cycle(self, lines: Iterator[str]) -> Iterator[ParsedLine]:
-        """批次解析一個 cycle"""
-        ...
+## 4. 功能需求
 
-    def get_templates(self) -> list[LogTemplate]:
-        """取得目前學習到的所有模板"""
-        ...
+### 4.1 AAAK（已落地基礎版，後續擴充）
 
-    def save_state(self, path: Path) -> None:
-        """持久化 Drain3 模型狀態"""
-        ...
+#### FR-A01：可選式 AAAK 摘要壓縮
 
-    def load_state(self, path: Path) -> None:
-        """載入已訓練的 Drain3 模型"""
-        ...
-```
+- 系統應可在 parser / experience 後處理階段，將 `LogTemplate` 或 `ExperienceArtifact` 轉成 compact summary。
+- 預設必須維持 **關閉**，不影響現行 `parse` / `analyze` / `agent` 行為。
 
-**Drain3 組態（DrainConfig）：**
+#### FR-A02：entity code 需來自本域語意
 
-| 參數 | 預設值 | 說明 |
-|------|--------|------|
-| `sim_th` | 0.4 | 模板相似度閥值 |
-| `depth` | 4 | 解析樹深度 |
-| `max_clusters` | 1024 | 最大叢集數量 |
-| `extra_delimiters` | `[":", "=", "|"]` | 額外分隔符 |
+- entity code 應優先從現有 module / channel 語意導出，例如 `RPC`、`wl0`、`SMCOS`。
+- 不可直接沿用以人物/情緒為核心的原始 AAAK 欄位；需轉成 LogSensing 領域欄位，如 severity、rule type、top templates。
 
-### 2.3 Demultiplexer
+#### FR-A03：raw path 必須保留
 
-**職責：** 依 PID / 模組前綴將日誌行分流至虛擬頻道。
+- raw template、raw evidence、原始 Markdown writeback 仍是 canonical path。
+- AAAK summary 僅作為額外產物或可替換的 context input，不得覆蓋 raw artifact。
 
-```python
-@dataclass
-class Channel:
-    name: str                  # 頻道名稱（如 "kernel", "networkd"）
-    filter_pattern: str        # 匹配模式
-    lines: list[ParsedLine]    # 屬於此頻道的日誌行
+#### FR-A04：AAAK 壓縮必須可回退
 
-class Demultiplexer:
-    def __init__(self, channel_defs: list[ChannelDef]):
-        ...
+- 若關閉 feature flag、摘要價值不足，或品質驗證不過，系統應回退到既有 raw text path。
 
-    def demux(self, lines: Iterator[ParsedLine]) -> dict[str, Channel]:
-        """將解析後的日誌行分配至各頻道"""
-        ...
-```
+#### FR-A05：experience writeback 應能同時保存人類版與壓縮版
 
----
+- 現有 `ExperienceArtifact.to_markdown()` 不應被破壞。
+- 可新增 `to_aaak()`、`to_compact_text()` 或等價介面，但需在 spec / code / docs 使用同一命名。
 
-## 3. Phase 2：Rule Engine & Analyzer
+### 4.2 TurboQuant（已落地基礎版，後續驗證）
 
-### 3.1 Baseline Profiler
+#### FR-T01：向量壓縮後端需與現行檢索介面相容
 
-**職責：** 運算正常開機各里程碑的平均時間差。
+- 壓縮後端應可被 `HybridRetriever` 視為與 `VectorIndex` 等價的 search provider。
+- 若採新類別，介面至少需支援 `build()`、`search()`、`save()`、`load()`。
 
-```python
-@dataclass
-class Milestone:
-    name: str                  # 里程碑名稱（如 "kernel_start", "network_ready"）
-    pattern: str               # 匹配模板或正則
-    expected_order: int        # 預期出現順序
+#### FR-T02：壓縮實作需以論文核心技術為邊界
 
-@dataclass
-class BaselineProfile:
-    milestones: list[Milestone]
-    mean_deltas: dict[str, timedelta]    # 里程碑間平均時間差
-    stddev_deltas: dict[str, timedelta]  # 標準差
-    sample_count: int                     # 取樣 cycle 數
+- 允許採用 paper-derived rotation / quantization / residual correction 思路。
+- 不允許直接搬運 GPL-3.0 repo 內的 Python 或 C/Metal 實作。
 
-class BaselineProfiler:
-    def __init__(self, milestones: list[Milestone]):
-        ...
+#### FR-T03：需要明確 fallback
 
-    def train(self, cycles: list[list[ParsedLine]]) -> BaselineProfile:
-        """從正常 cycle 訓練基準線"""
-        ...
+- 若壓縮後端不可用、驗證失敗、或 quality gate 未達標，系統需回退到現有 float32 `VectorIndex`。
+- 若向量依賴缺失，仍應維持目前已存在的 BM25-only 降級行為。
 
-    def save(self, path: Path) -> None: ...
-    def load(self, path: Path) -> None: ...
+#### FR-T04：持久化格式需可識別 backend 與參數
+
+- `save()` / `load()` 的 metadata 必須包含 backend 型別、bit width、embedding dimension、版本資訊。
+- 讀取 metadata 時若 backend 不相容，需能拒絕載入或回退重建，不可默默產生錯誤結果。
+
+#### FR-T05：品質驗證先於預設開啟
+
+- 在 golden query / representative docs 上，需先驗證 retrieval quality 與資源使用，再決定是否開啟預設壓縮。
+
+### 4.3 CLI / Docs / Workflow（規劃新增）
+
+#### FR-C01：CLI 介面預設保持相容
+
+- 既有 `logsensing parse/analyze/agent/train/report` 指令語意不應因新增壓縮能力而破壞。
+- 優先透過 config 或內部 wiring 啟用新能力，避免一開始就擴大 CLI surface。
+
+#### FR-C02：文件必須區分「現況」與「規劃」
+
+- `docs/spec.md`、`docs/test.md`、`docs/plan.md`、`docs/task.md`、`docs/todo.md` 必須同步標示哪些部分尚未實作。
+- README 的文件索引必須包含新增文件。
+
+#### FR-C03：/fleet、/agent、/review、commit workflow 必須可從文件直接操作
+
+- `docs/plan.md`：定義 lane / branch / merge gate
+- `docs/test.md`：定義 `/agent` 測試執行與回報
+- `docs/task.md` / `docs/todo.md`：定義 owner、DoD、交接點
+
+## 5. 架構影響面
+
+### 5.1 模組影響矩陣
+
+| 檔案 / 模組 | 現況 | 規劃變更 |
+|---|---|---|
+| `src/logsensing/config.py` | 已有 AAAK enable、entity map、summary item 上限、compact experience 偏好，以及 vector backend / bits / seed 設定 | 後續可再加入 benchmark / quality-gate 專用設定 |
+| `src/logsensing/parser/drain.py` | 產出 `ParsedLine` / `LogTemplate` | 保持原介面；AAAK 目前作為後處理 hook，不直接污染核心 parser |
+| `src/logsensing/parser/demux.py` | 提供 channel / module 邏輯 | 可重用於 AAAK entity map 來源 |
+| `src/logsensing/rag/memory.py` | 已寫 JSON + Markdown experience，且可額外寫 `.aaak` compact 檔 | 後續可再擴充更多 compact schema / versioning |
+| `src/logsensing/rag/chunker.py` | 文本與 log line 切塊 | 已可透過 compact experience 路徑進入既有 chunking pipeline |
+| `src/logsensing/rag/vector.py` | float32 FAISS index | 作為 TurboQuant 不可用時的 fallback backend |
+| `src/logsensing/rag/turboquant.py` | paper-derived 旋轉 + 低 bit quantization 壓縮索引 | 持續補 benchmark、quality gate、更多 metadata versioning |
+| `src/logsensing/rag/retriever.py` | 依 search provider 做 RRF | 介面不應大改，保持 wiring 穩定 |
+| `src/logsensing/cli.py` | 建 index、載 index、RAG 注入 agent，且已支援 AAAK compact experience writeback、`templates.aaak` 匯出與 backend fallback | 以 config / loader 層持續擴充，不破壞既有命令 |
+
+### 5.2 目標資料流
+
+```text
+Raw Log
+  -> StreamSplitter
+  -> DrainParser
+  -> (已落地) AAAK summarizer
+  -> Analyzer / Agent / ExperienceArtifact
+  -> (已落地) compact experience text
+  -> DocumentChunker
+  -> BM25Index + Vector backend (faiss / turboquant)
+  -> HybridRetriever
 ```
 
-### 3.2 Anomaly Detector
+### 5.3 設計原則
 
-**職責：** 套用規則庫偵測異常事件。
+1. **保留現行 raw path**
+2. **壓縮能力以 feature flag 控制**
+3. **壓縮 backend 必須可完全拔除**
+4. **先文件、後測試、再進 source**
 
-```python
-@dataclass
-class AnomalyRule:
-    rule_id: str
-    name: str
-    severity: Literal["critical", "warning", "info"]
-    rule_type: Literal["pattern", "timeout", "sequence"]
-    config: dict
-
-@dataclass
-class Anomaly:
-    anomaly_id: str
-    cycle_id: int
-    rule_id: str
-    severity: str
-    timestamp: datetime | None
-    message: str
-    context_before: list[str]  # 前 N 行
-    context_after: list[str]   # 後 N 行
-    metadata: dict
-
-class AnomalyDetector:
-    def __init__(self, rules: list[AnomalyRule], baseline: BaselineProfile | None = None):
-        ...
-
-    def detect(self, cycle: list[ParsedLine], cycle_id: int) -> list[Anomaly]:
-        """偵測單一 cycle 中的所有異常"""
-        ...
-```
-
-**內建規則類型：**
-
-| 類型 | 說明 | 範例 |
-|------|------|------|
-| `pattern` | 模板/正則匹配 | Kernel panic, OOM killer |
-| `timeout` | 里程碑超時 | kernel_start → network_ready > 3σ |
-| `sequence` | 事件序列異常 | 缺少預期里程碑 |
-
-### 3.3 Context Clipper
-
-**職責：** 精準裁切案發現場前後 N 行乾淨日誌。
-
-```python
-class ContextClipper:
-    def __init__(self, before: int = 50, after: int = 50):
-        ...
-
-    def clip(self, lines: list[str], hit_index: int) -> tuple[list[str], list[str]]:
-        """回傳 (context_before, context_after)"""
-        ...
-```
-
-### 3.4 OTel Exporter
-
-**職責：** 將異常資料轉為 OpenTelemetry 標準 JSON。
-
-**輸出格式（anomalies.json）：**
-
-```json
-{
-  "resource": {
-    "service.name": "logsensing",
-    "device.model": "<device_model>"
-  },
-  "traces": [
-    {
-      "traceId": "<boot_cycle_trace_id>",
-      "spans": [
-        {
-          "spanId": "<anomaly_span_id>",
-          "name": "anomaly.kernel_panic",
-          "startTimeUnixNano": 1700000000000000000,
-          "attributes": {
-            "anomaly.severity": "critical",
-            "anomaly.rule_id": "kernel_panic_001",
-            "anomaly.cycle_id": 42,
-            "anomaly.message": "Kernel panic - not syncing: ...",
-            "anomaly.context_before_lines": 50,
-            "anomaly.context_after_lines": 50
-          },
-          "events": [
-            {
-              "name": "context",
-              "attributes": {
-                "log.context_before": "...",
-                "log.context_after": "..."
-              }
-            }
-          ]
-        }
-      ]
-    }
-  ]
-}
-```
-
----
-
-## 4. Phase 3：Agent CLI
-
-### 4.1 CLI 命令結構
-
-```
-logsensing parse   <logfile>  [--anchors ...] [--output ...]
-logsensing analyze <logfile>  [--rules ...] [--baseline ...]
-logsensing agent   analyze    [--cycle N] [--model ...]
-logsensing agent   chat       [--model ...]
-logsensing train   baseline   <logfile> [--milestones ...]
-logsensing train   drain      <logfile> [--config ...]
-```
-
-### 4.2 LLM Agent
-
-**Function Calling 工具定義：**
-
-| Tool | 說明 |
-|------|------|
-| `get_anomalies(cycle_id?)` | 取得異常清單 |
-| `get_cycle_context(cycle_id, line_range?)` | 取得指定 cycle 原始日誌 |
-| `get_baseline()` | 取得基準線 profile |
-| `get_templates()` | 取得 Drain3 模板清單 |
-| `search_logs(query, cycle_id?)` | 全文搜尋日誌 |
-
-**RCA 報告格式：**
-
-```markdown
-## Cycle #42 - Root Cause Analysis
-
-**嚴重程度：** Critical
-**異常類型：** Kernel Panic
-
-### 時間軸
-- 00:00.000 - U-Boot 啟動
-- 00:03.421 - Kernel 載入
-- 00:15.892 - ⚠️ eth0 driver timeout
-- 00:16.001 - ❌ Kernel panic
-
-### 根因分析
-...
-
-### 建議修復方向
-...
-```
-
-### 4.3 組態管理
-
-**config.toml 結構：**
+## 6. 目前設定項（已實作）
 
 ```toml
 [parser]
-anchors = ["U-Boot TPL"]
-fallback_anchors = ["Starting kernel", "Booting Linux"]
-timestamp_pattern = '^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\] '
-encoding = "utf-8"
-max_cycle_lines = 100000
+aaak_enabled = false
+aaak_entity_map = {}
+aaak_max_summary_items = 5
 
-[drain]
-sim_th = 0.4
-depth = 4
-max_clusters = 1024
-
-[analyzer]
-context_lines_before = 50
-context_lines_after = 50
-timeout_sigma = 3.0
-
-[agent]
-model = "gpt-4o"
-api_base = ""
-temperature = 0.1
-max_tokens = 4096
-
-[rag]  # 進階里程碑
-chunk_size = 512
-chunk_overlap = 64
-faiss_index_path = ""
+[rag]
+prefer_compact_experience = false
+vector_backend = "faiss"           # faiss | turboquant
+vector_compression_bits = 4
+vector_rotation_seed = 0
 ```
 
----
+設定原則：
 
-## 5. 非功能需求
+- 新設定預設必須對應現況行為。
+- 若使用者沒有打開新設定，系統行為應與當前 release 等價。
 
-| 項目 | 要求 |
-|------|------|
-| 日誌檔案大小 | 支援 > 1 GB 串流處理 |
-| 單次分析 Cycle 數 | 支援 > 1000 cycles |
-| 記憶體上限 | 單一 cycle 處理不超過 500 MB |
-| CLI 回應時間 | parse 命令 < 60s / GB |
-| 測試覆蓋率 | 核心模組 ≥ 80% |
-| Python 版本 | ≥ 3.10 |
+## 7. 驗收條件
 
----
+| 類別 | 驗收條件 |
+|---|---|
+| 相容性 | 現有 CLI 與既有 docs 描述的既有功能不可被破壞 |
+| AAAK 功能 | 在代表性 log template / experience bundle 上，能提供可量化的 token 降低，且 raw path 可回退 |
+| TurboQuant 功能 | 在代表性 retrieval query 上，需達成可接受的 recall / top-k overlap 門檻後才可預設開啟 |
+| 授權 | 不得出現直接引用 GPL repo code 的情況 |
+| 文件 | README、spec、test、plan、task、todo 的名詞與邊界一致 |
+| 驗證 | 需保留既有 `pytest` / `ruff` / `mypy` runner，新增測試不得脫離現有工具鏈 |
 
-## 6. 相依套件
+## 8. 非目標
 
-### 核心
+下列項目不屬於本次規格目標：
 
-| 套件 | 用途 |
-|------|------|
-| `drain3` | 日誌模板動態探勘 |
-| `typer` | CLI 框架 |
-| `rich` | 終端機格式化輸出 |
-| `pydantic` | 資料模型驗證 |
-| `opentelemetry-api` | OTel 資料結構 |
+- 以 AAAK 取代 raw log 儲存
+- 以 TurboQuant 取代 BM25
+- 將 GPL-3.0 repo 直接納入專案
+- 為了壓縮能力而重寫現有 CLI 介面
 
-### Agent
+## 9. 交叉文件關係
 
-| 套件 | 用途 |
-|------|------|
-| `openai` | LLM API 客戶端 |
-| `httpx` | 非同步 HTTP |
-
-### RAG（進階里程碑）
-
-| 套件 | 用途 |
-|------|------|
-| `faiss-cpu` | 向量檢索 |
-| `rank-bm25` | BM25 精準匹配 |
-| `sentence-transformers` | 文本向量化 |
-
-### 開發
-
-| 套件 | 用途 |
-|------|------|
-| `pytest` | 測試框架 |
-| `pytest-cov` | 覆蓋率 |
-| `ruff` | Linter + Formatter |
-| `mypy` | 靜態型別檢查 |
+| 文件 | 角色 |
+|---|---|
+| `docs/spec.md` | 定義邊界、目標、驗收與授權限制 |
+| `docs/test.md` | 把規格轉成 test matrix 與驗證命令 |
+| `docs/plan.md` | 把規格與測試風險轉成 roadmap 與 lane 切分 |
+| `docs/task.md` | 把 roadmap 轉成可驗證任務 |
+| `docs/todo.md` | 把任務下鑽成可派工的細粒度執行項 |

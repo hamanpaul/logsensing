@@ -2,9 +2,23 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Protocol
+
 from logsensing.rag.bm25 import BM25Index, SearchResult
 from logsensing.rag.chunker import Chunk
-from logsensing.rag.vector import VectorIndex
+
+
+class VectorSearchBackend(Protocol):
+    """Common contract for vector backends used by HybridRetriever."""
+
+    def build(self, chunks: list[Chunk]) -> None: ...
+
+    def search(self, query: str, top_k: int = 5) -> list[SearchResult]: ...
+
+    def save(self, path: Path) -> None: ...
+
+    def load(self, path: Path) -> None: ...
 
 
 class HybridRetriever:
@@ -13,7 +27,7 @@ class HybridRetriever:
     def __init__(
         self,
         bm25: BM25Index | None = None,
-        vector: VectorIndex | None = None,
+        vector: VectorSearchBackend | None = None,
         bm25_weight: float = 0.5,
         vector_weight: float = 0.5,
         rrf_k: int = 60,

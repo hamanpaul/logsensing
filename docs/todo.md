@@ -1,95 +1,45 @@
-# LogSensing 開發待辦追蹤
+# LogSensing AAAK / TurboQuant 細粒度 Todo
 
-> 狀態定義：⬜ 待辦 | 🔧 進行中 | ✅ 完成 | 🚫 阻塞
+> 狀態欄預設使用：`⬜` 待做 / `🔧` 進行中 / `✅` 完成 / `🚫` 阻塞。
+> 本文件每一列都必須可追溯回 `docs/task.md` 的任務 ID。
 
----
+| Todo ID | 對應任務 | 細項 | 驗證方式 | Owner | 狀態 | 備註 |
+|---|---|---|---|---|---|---|
+| TD-001 | P0-DOC-01 | 從 research 文件抽出 AAAK / TurboQuant 邊界與授權限制 | `docs/spec.md` 有獨立授權邊界段落 | integration | ✅ | 已明講 paper-only / no GPL import |
+| TD-002 | P0-DOC-01 | 對齊現有 parser / rag / memory / config code 行為 | `docs/spec.md` 現況表與 source 對齊 | integration | ✅ | 已持續回寫，避免把未實作內容寫成現況 |
+| TD-003 | P0-DOC-02 | 盤點既有測試 harness 與 runner | `docs/test.md` 有 reuse harness 表 | integration | ✅ | 已重用 `pytest` 既有結構 |
+| TD-004 | P0-DOC-02 | 建立 AAAK 風險矩陣 | `docs/test.md` 包含 T01~T04 | integration | ✅ | 已涵蓋 entity map / summary / fallback |
+| TD-005 | P0-DOC-02 | 建立 TurboQuant 風險矩陣 | `docs/test.md` 包含 T05~T10 | integration | ✅ | 已涵蓋 contract / recall / metadata / docs drift |
+| TD-006 | P0-DOC-03 | 在 roadmap 定義 phase 與退出條件 | `docs/plan.md` phase 表完整 | integration | ✅ | 已以 gate 表述，不寫工期 |
+| TD-007 | P0-DOC-03 | 在 roadmap 定義 fleet lanes | `docs/plan.md` lane 表完整 | integration | ✅ | lane 名稱與 branch 前綴已對齊 |
+| TD-008 | P0-DOC-03 | 明確定義 `/agent`、`/review`、commit workflow | `docs/plan.md` 有專章 | integration | ✅ | 已對齊 user 指定邊界 |
+| TD-009 | P0-DOC-04 | 為每個 phase 任務補 owner | `docs/task.md` owner 欄完整 | integration | ✅ | 已含 fleet / agent / review |
+| TD-010 | P0-DOC-04 | 為每個任務補完成定義 | `docs/task.md` DoD 欄完整 | integration | ✅ | DoD 已可驗證 |
+| TD-011 | P0-DOC-05 | 把文件任務拆成可直接派工的 todo | `docs/todo.md` 可追溯到 task ID | integration | ✅ | todo 粒度已小於 task |
+| TD-012 | P0-DOC-06 | 更新 README 文件索引 | README 文件清單完整 | integration | ✅ | 已補 test/task 與設定說明 |
+| TD-013 | P1-AAAK-01 | 定義 AAAK config key 與預設值 | spec / 後續 code contract 一致 | fleet/parser-aaak | ✅ | 已新增 `aaak_enabled`、`aaak_entity_map`、`aaak_max_summary_items` 與 compact preference |
+| TD-014 | P1-AAAK-01 | 定義 compact summary 欄位命名 | summary formatter 測試可寫 | fleet/parser-aaak | ✅ | 已固定 `aaak-log-v1` 與 `EXP/F/TPL/RCA` line contract |
+| TD-015 | P1-AAAK-02 | 建立 module -> entity code 規則 | unit test 通過 | fleet/parser-aaak | ✅ | 內建 wifi/dhd/rpc/pcie/kernel/offload/network 對應 |
+| TD-016 | P1-AAAK-02 | 建立 template / finding 壓縮格式 | formatter 測試通過 | fleet/parser-aaak | ✅ | raw path 保留，compact summary 為增量產物 |
+| TD-017 | P2-EXP-01 | 為 experience 新增 compact path | writeback 測試通過 | fleet/experience-rag-wiring | ✅ | 已新增 `.aaak` writeback，JSON/Markdown 仍保留 |
+| TD-018 | P2-EXP-02 | 決定 compact summary 如何進入 chunker | integration test 通過 | fleet/experience-rag-wiring | ✅ | `prefer_compact_experience` 會優先讀 `.aaak`，否則回退 markdown |
+| TD-019 | P2-EXP-03 | 擴充 platform isolation 測試 | `tests/test_rag_memory.py` 類型測試通過 | agent | ✅ | 已補 compact 與 platform isolation 測試 |
+| TD-020 | P3-TQ-01 | 定義 quantization metadata schema | round-trip 測試可覆蓋 | fleet/rag-turboquant-core | ✅ | 已包含 backend / version / bits / dim / padded_dim 與 chunk metadata |
+| TD-021 | P3-TQ-01 | 補授權聲明與實作邊界 | spec / plan / code comments 一致 | fleet/rag-turboquant-core | ✅ | 已明講 no GPL code import |
+| TD-022 | P3-TQ-02 | 實作壓縮 backend `build/search/save/load` contract | component tests 通過 | fleet/rag-turboquant-core | ✅ | 已新增 `src/logsensing/rag/turboquant.py`，且不破壞 `HybridRetriever` wiring |
+| TD-023 | P3-TQ-02 | 建立 float32 fallback path | fallback 測試通過 | fleet/rag-turboquant-core | ✅ | 已補 TurboQuant load fail -> FAISS fallback 與雙失敗不 crash 測試 |
+| TD-024 | P3-TQ-03 | 建立 golden query corpus 與 baseline | benchmark 可重跑 | fleet/validation-bench | ⬜ | query 要覆蓋 kernel / wifi / rpc / boot |
+| TD-025 | P3-TQ-04 | 產出 recall / top-k overlap / 資源比較報告 | review 可引用報告 | fleet/validation-bench | ⬜ | 決定 turbo4 是否可作預設 |
+| TD-026 | P4-REL-01 | 對齊 CLI / config / README 使用方式 | CLI help / docs audit 通過 | fleet/cli-docs-integration | ✅ | 已同步 AAAK parser export 與 vector backend 設定 |
+| TD-027 | P4-REL-02 | 依 `/review` 產出 blocker 清單與修復追蹤 | review report 存在 | review | ⬜ | false positive 需明記不修原因 |
+| TD-028 | P4-REL-03 | 以 conventional commit 產生 commit message 並 push | commit / push 成功 | agent | ⬜ | 只在測試與 review 通過後執行 |
+| TD-029 | P3-TQ-03 | 整理 `docs/sample_logs` 與 `~/b-log` fixture 來源 | skipped 測試可重現或以 config 掛載 | fleet/validation-bench | ⬜ | 降低目前 16 skipped，支援 benchmark / regression |
+| TD-030 | P3-TQ-03 | 建立 b-log ground truth 與 golden query 集 | benchmark 命中集可重跑 | fleet/validation-bench | ⬜ | 至少覆蓋 boot / storage / wifi / fatal signal 類問題 |
+| TD-031 | P4-REL-04 | 將 anomaly 結果做 dedup / grouping | b-log 報告可輸出較穩定問題清單 | fleet/cli-docs-integration | ⬜ | 降低 `cfg80211_error` 類高頻重複噪音 |
 
-## Sprint 0：專案骨架
+## 文件交叉檢查
 
-| ID | 任務 | 狀態 | 備註 |
-|----|------|------|------|
-| S0-01 | 初始化 pyproject.toml（uv） | ✅ | Python 3.10+, src layout |
-| S0-02 | 建立 src/logsensing/ 目錄結構 | ✅ | 含 parser/, analyzer/, agent/, rag/ |
-| S0-03 | 設定 ruff + mypy 組態 | ✅ | pyproject.toml 內嵌 |
-| S0-04 | 設定 pytest + conftest.py | ✅ | |
-| S0-05 | 建立 samples/ 目錄與測試用日誌樣本 | ✅ | 已有 docs/sample_logs/ 實際日誌 |
-| S0-06 | 撰寫 README.md 第一版 | ✅ | |
-
----
-
-## Sprint 1：Parser & Normalizer
-
-| ID | 任務 | 狀態 | 依賴 | 備註 |
-|----|------|------|------|------|
-| S1-01 | 實作 StreamSplitter 核心邏輯 | ✅ | S0-02 | 串流式切割，記憶體保護 |
-| S1-02 | 實作錨點設定載入（多錨點 + regex） | ✅ | S1-01 | config.toml 整合 |
-| S1-03 | 整合 Drain3，實作 DrainParser | ✅ | S0-02 | 模板探勘 + 參數萃取 |
-| S1-04 | 實作 Drain3 模型持久化（save/load） | ✅ | S1-03 | |
-| S1-05 | 實作 Demultiplexer | ✅ | S1-03 | PID / 模組前綴分流 |
-| S1-06 | 實作時間戳記解析器 | ✅ | S1-01 | 多格式時間戳自動偵測 |
-| S1-07 | 撰寫 StreamSplitter 單元測試 | ✅ | S1-01 | 17 tests |
-| S1-08 | 撰寫 DrainParser 單元測試 | ✅ | S1-03 | 18 tests |
-| S1-09 | 撰寫 Demultiplexer 單元測試 | ✅ | S1-05 | 29 tests |
-| S1-10 | Sprint 1 整合測試 | ✅ | S1-01~S1-09 | 端到端 parse pipeline |
-
----
-
-## Sprint 2：Rule Engine & Analyzer
-
-| ID | 任務 | 狀態 | 依賴 | 備註 |
-|----|------|------|------|------|
-| S2-01 | 定義 Milestone 資料模型 | ✅ | S1-03 | dataclass model |
-| S2-02 | 實作 BaselineProfiler（train） | ✅ | S2-01 | 從正常 cycle 訓練 |
-| S2-03 | 實作 BaselineProfiler（save/load） | ✅ | S2-02 | |
-| S2-04 | 定義 AnomalyRule 規則模型 | ✅ | | pattern / timeout / sequence |
-| S2-05 | 實作 AnomalyDetector 核心 | ✅ | S2-02, S2-04 | |
-| S2-06 | 實作 pattern 規則偵測 | ✅ | S2-05 | Kernel panic, OOM 等 |
-| S2-07 | 實作 timeout 規則偵測 | ✅ | S2-05 | 基於 baseline σ 判定 |
-| S2-08 | 實作 sequence 規則偵測 | ✅ | S2-05 | 缺失里程碑偵測 |
-| S2-09 | 實作 ContextClipper | ✅ | | 前後 N 行裁切 |
-| S2-10 | 實作 OTel Exporter | ✅ | S2-05 | anomalies.json 輸出 |
-| S2-11 | 撰寫 Analyzer 模組單元測試 | ✅ | S2-05~S2-10 | 21 tests |
-| S2-12 | Sprint 2 整合測試 | ✅ | S2-all | parse → analyze 管線 |
-
----
-
-## Sprint 3：CLI 封裝與 Agent 整合
-
-| ID | 任務 | 狀態 | 依賴 | 備註 |
-|----|------|------|------|------|
-| S3-01 | 實作 Typer CLI 入口 | ✅ | S1, S2 | parse / analyze / agent / train |
-| S3-02 | 實作 `parse` 子命令 | ✅ | S3-01 | |
-| S3-03 | 實作 `analyze` 子命令 | ✅ | S3-01 | |
-| S3-04 | 實作 `train baseline` 子命令 | ✅ | S3-01 | |
-| S3-05 | 實作 `train drain` 子命令 | ✅ | S3-01 | |
-| S3-06 | 實作組態管理（config.toml） | ✅ | | toml 載入 + pydantic 驗證 |
-| S3-07 | 定義 LLM Function Calling 工具 | ✅ | S2-10 | 6 個 tools（含 search_knowledge_base） |
-| S3-08 | 實作 RCA Agent 自動分析 | ✅ | S3-07 | LLM RCA + 規則式 fallback |
-| S3-09 | 實作 `agent analyze` 子命令 | ✅ | S3-08 | |
-| S3-10 | 實作 Interactive Q&A | ✅ | S3-07 | Rich TUI + LLM 對話 |
-| S3-11 | 實作 `agent chat` 子命令 | ✅ | S3-10 | |
-| S3-12 | 撰寫 CLI 測試 | ✅ | S3-01~S3-11 | 9 tests |
-| S3-13 | Sprint 3 端到端測試 | ✅ | S3-all | 完整管線驗證 |
-
----
-
-## Sprint 4：混合 RAG 知識庫
-
-| ID | 任務 | 狀態 | 依賴 | 備註 |
-|----|------|------|------|------|
-| S4-01 | 實作文件切塊器 | ✅ | | Markdown / 純文字 / 日誌行 → chunks |
-| S4-02 | 實作 BM25 索引建置與查詢 | ✅ | S4-01 | rank-bm25, save/load 支援 |
-| S4-03 | 實作 FAISS 向量索引 | ✅ | S4-01 | sentence-transformers + faiss-cpu |
-| S4-04 | 實作混合檢索 API（融合排序） | ✅ | S4-02, S4-03 | RRF (Reciprocal Rank Fusion) |
-| S4-05 | Agent 知識庫整合 | ✅ | S4-04, S3-08 | search_knowledge_base tool |
-| S4-06 | 撰寫 RAG 模組測試 | ✅ | S4-all | 30 tests (19 RAG + 11 tools) |
-
----
-
-## 持續性任務
-
-| ID | 任務 | 狀態 | 備註 |
-|----|------|------|------|
-| C-01 | 維護測試覆蓋率 ≥ 80% | ✅ | 143 tests, 132 passed, 11 skipped（缺 sample log） |
-| C-02 | 更新文件（spec.md / README.md） | ✅ | 隨開發進度更新 |
-| C-03 | 收集實際裝置日誌樣本 | ✅ | 已有 `docs/sample_logs/20260318_ATT_newHW7-normal_1354.log`（7MB, 113K 行, 25 cycles, BGW720-300） |
+- [ ] `docs/spec.md` 的名詞與設定鍵，有在 `docs/test.md` / `docs/plan.md` / `docs/task.md` / `docs/todo.md` 出現時保持一致
+- [ ] lane 名稱在 `docs/plan.md` 與 `docs/task.md` 完全一致
+- [ ] `docs/todo.md` 中每個 Todo 都能追到 `docs/task.md` 的任務 ID
+- [ ] README 文件索引與實際 docs 檔名一致
