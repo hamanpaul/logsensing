@@ -50,3 +50,6 @@ uv.lock
 
 # Local git worktrees
 .worktrees/
+
+# Ignore local session plan artifacts
+docs/superpowers/plans/
