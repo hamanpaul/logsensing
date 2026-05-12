@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 PLAYBOOK_DIR = Path(__file__).parent / "playbook"
 SUITE_FILES = [
     "parser_cases.yaml",
@@ -111,6 +113,14 @@ def test_fixture_manifest_allows_planned_refs_without_suite_match() -> None:
     ]
 
     _validate_used_by_entries(used_by, case_ids)
+
+
+def test_validate_used_by_entries_rejects_unknown_existing_refs() -> None:
+    case_ids = {"platform-auto-detect"}
+    used_by = [{"case_id": "missing-existing-case", "kind": "existing"}]
+
+    with pytest.raises(AssertionError):
+        _validate_used_by_entries(used_by, case_ids)
 
 
 def test_fixture_manifest_used_by_refs_known_cases() -> None:
