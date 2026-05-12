@@ -47,11 +47,17 @@ def test_logsensing_skill_covers_required_playbooks() -> None:
     assert "env_repair" in text
     assert "uv run logsensing --help" in text
     assert "uv sync" in text
+    assert "uv sync --extra agent" in text
+    assert "uv sync --extra rag" in text
+    assert "uv sync --extra agent --extra rag" in text
     assert "line numbers" in text
     assert "references/cli-workflows.md" in text
     assert "uv run logsensing analyze <log> --output <anomalies>" in text
     assert "uv run logsensing train baseline <log> --output <baseline>" in text
     assert "uv run logsensing agent analyze ..." in text
+    assert "Do not claim LLM-backed agent behavior unless `agent` support is available." in text
+    assert "rule-based fallback" in text
+    assert "do not suggest `pip install`" in text
 
     for command in [
         "uv run logsensing analyze /path/to/device.log --output output/device.anomalies.json",
@@ -75,6 +81,7 @@ def test_logsensing_reference_contains_command_examples() -> None:
 
     for header in [
         "# Logsensing CLI Workflows",
+        "## Dependency guidance",
         "## Analyze one log",
         "## Analyze multiple logs",
         "## Train baseline or Drain state",
@@ -89,8 +96,12 @@ def test_logsensing_reference_contains_command_examples() -> None:
     assert "uv run logsensing train drain" in text
     assert "uv run logsensing agent analyze" in text
     assert "uv run logsensing agent chat" in text
+    assert "uv sync --extra agent" in text
+    assert "uv sync --extra rag" in text
+    assert "uv sync --extra agent --extra rag" in text
+    assert "rule-based behavior" in text
 
     assert (
-        "If `uv sync` fails, stop and report the root cause instead of trying "
-        "`pip install`."
+        "If `uv sync` or either extra sync fails, stop and report the root cause "
+        "instead of trying `pip install`."
     ) in text

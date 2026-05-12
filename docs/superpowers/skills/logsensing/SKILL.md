@@ -13,6 +13,7 @@ Use this skill when the user wants to scan logs, summarize anomalies, train base
 - Prefer `uv run logsensing ...` over direct system Python execution.
 - Before running a workflow, check `uv` and `uv run logsensing --help`.
 - If readiness fails, only attempt the documented repair path: `uv sync`.
+- Install optional workflow support only through `uv sync --extra ...`; do not suggest `pip install`.
 - If repair still fails, stop and report the root cause plainly.
 - Keep outputs compact: one-line conclusion, artifact paths, top findings, affected cycles, line numbers, and timestamps when useful.
 - Do not dump large raw logs unless the user explicitly asks.
@@ -77,6 +78,19 @@ Return the artifact path and what it is for.
 
 Use for `agent analyze`, `agent chat`, knowledge docs, and platform RAG follow-up work.
 
+Dependency guidance:
+
+- base CLI readiness / repair: `uv sync`
+- LLM-backed `agent analyze` and `agent chat`: `uv sync --extra agent`
+- RAG indexing and `--knowledge-doc` workflows: `uv sync --extra rag`
+- combined agent + knowledge-doc workflows may require both extras: `uv sync --extra agent --extra rag`
+
+Behavior rules:
+
+- Do not claim LLM-backed agent behavior unless `agent` support is available.
+- If `agent` extras are missing, describe the result as a rule-based fallback when the CLI downgrades instead of presenting it as full agent reasoning.
+- If RAG extras are missing, do not promise knowledge-doc indexing or retrieval until `uv sync --extra rag` succeeds.
+
 Commands:
 
 - `uv run logsensing agent analyze ...`
@@ -94,6 +108,12 @@ Readiness sequence:
 2. run `uv run logsensing --help`
 3. if needed, run `uv sync`
 4. re-run `uv run logsensing --help`
+
+Capability-specific repair:
+
+- when the CLI reports missing LLM support, run `uv sync --extra agent`
+- when the CLI reports missing RAG support, run `uv sync --extra rag`
+- when the workflow needs both, run `uv sync --extra agent --extra rag`
 
 If any step fails, stop with the failing command and root cause.
 
