@@ -58,8 +58,14 @@ def test_logsensing_skill_covers_required_playbooks() -> None:
         "uv run logsensing report /path/to/device.log --output output/device.report.md",
         "uv run logsensing train baseline /path/to/normal.log --output output/baseline.json",
         "uv run logsensing train drain /path/to/device.log --output output/drain_state.json",
-        "uv run logsensing agent analyze --anomalies output/device.anomalies.json --logfile /path/to/device.log",
-        "uv run logsensing agent chat --logfile /path/to/device.log --knowledge-doc docs/spec.md",
+        (
+            "uv run logsensing agent analyze --anomalies "
+            "output/device.anomalies.json --logfile /path/to/device.log"
+        ),
+        (
+            "uv run logsensing agent chat --logfile "
+            "/path/to/device.log --knowledge-doc docs/spec.md"
+        ),
     ]:
         assert command not in text
 
@@ -84,4 +90,7 @@ def test_logsensing_reference_contains_command_examples() -> None:
     assert "uv run logsensing agent analyze" in text
     assert "uv run logsensing agent chat" in text
 
-    assert "If `uv sync` fails, stop and report the root cause instead of trying `pip install`." in text
+    assert (
+        "If `uv sync` fails, stop and report the root cause instead of trying "
+        "`pip install`."
+    ) in text

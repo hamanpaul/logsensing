@@ -6,9 +6,8 @@ SRC_DIR="$REPO_ROOT/docs/superpowers/skills/logsensing"
 DEST_ROOT="${LOGSENSING_SKILL_DEST_ROOT:-$HOME/.agents/skills}"
 DEST_DIR="$DEST_ROOT/logsensing"
 
-mkdir -p "$DEST_DIR/references"
-
-cp "$SRC_DIR/SKILL.md" "$DEST_DIR/SKILL.md"
-cp "$SRC_DIR/references/cli-workflows.md" "$DEST_DIR/references/cli-workflows.md"
+mkdir -p "$DEST_ROOT"
+rm -rf "$DEST_DIR"
+cp -a "$SRC_DIR" "$DEST_DIR"
 
 echo "Installed logsensing skill to $DEST_DIR"

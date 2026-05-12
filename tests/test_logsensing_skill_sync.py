@@ -8,20 +8,35 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SYNC_SCRIPT = ROOT / "scripts" / "sync_logsensing_skill.sh"
-SRC_SKILL = ROOT / "docs" / "superpowers" / "skills" / "logsensing" / "SKILL.md"
-SRC_REF = (
-    ROOT
-    / "docs"
-    / "superpowers"
-    / "skills"
-    / "logsensing"
-    / "references"
-    / "cli-workflows.md"
-)
+SRC_DIR = ROOT / "docs" / "superpowers" / "skills" / "logsensing"
+
+
+def _snapshot_tree(root: Path) -> tuple[set[str], dict[str, str]]:
+    directories = {
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if path.is_dir()
+    }
+    files = {
+        path.relative_to(root).as_posix(): path.read_text(encoding="utf-8")
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    return directories, files
+
+
+def _assert_matching_tree(dest_dir: Path) -> None:
+    assert _snapshot_tree(dest_dir) == _snapshot_tree(SRC_DIR)
 
 
 def test_sync_script_copies_skill_assets(tmp_path: Path) -> None:
     dest_root = tmp_path / "user-skills"
+    dest_dir = dest_root / "logsensing"
+    stale_file = dest_dir / "references" / "stale.md"
+
+    stale_file.parent.mkdir(parents=True)
+    stale_file.write_text("old content", encoding="utf-8")
+
     env = dict(os.environ)
     env["LOGSENSING_SKILL_DEST_ROOT"] = str(dest_root)
 
@@ -36,11 +51,8 @@ def test_sync_script_copies_skill_assets(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
 
-    dest_skill = dest_root / "logsensing" / "SKILL.md"
-    dest_ref = dest_root / "logsensing" / "references" / "cli-workflows.md"
-
-    assert dest_skill.read_text(encoding="utf-8") == SRC_SKILL.read_text(encoding="utf-8")
-    assert dest_ref.read_text(encoding="utf-8") == SRC_REF.read_text(encoding="utf-8")
+    assert not stale_file.exists()
+    _assert_matching_tree(dest_dir)
 
 
 def test_sync_script_uses_default_destination(tmp_path: Path) -> None:
@@ -60,8 +72,4 @@ def test_sync_script_uses_default_destination(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
     dest_root = tmp_path / ".agents" / "skills"
-    dest_skill = dest_root / "logsensing" / "SKILL.md"
-    dest_ref = dest_root / "logsensing" / "references" / "cli-workflows.md"
-
-    assert dest_skill.read_text(encoding="utf-8") == SRC_SKILL.read_text(encoding="utf-8")
-    assert dest_ref.read_text(encoding="utf-8") == SRC_REF.read_text(encoding="utf-8")
+    _assert_matching_tree(dest_root / "logsensing")
