@@ -6,9 +6,9 @@
       "path": "docs/sample_logs/20260318_ATT_newHW7-normal_1354.log",
       "availability": "checked-in",
       "used_by": [
-        "parser-split-primary-anchor",
-        "parser-timestamp-and-no-timestamp",
-        "platform-auto-detect"
+        {"case_id": "parser-split-primary-anchor", "kind": "existing"},
+        {"case_id": "parser-timestamp-and-no-timestamp", "kind": "existing"},
+        {"case_id": "platform-auto-detect", "kind": "existing"}
       ],
       "notes": "Main BDK sample log used by functional CLI and parser coverage."
     },
@@ -18,10 +18,18 @@
       "path_hint": "~/b-log/mini_COM1_260327-154959.log",
       "availability": "external-env",
       "used_by": [
-        "reporter-prplos-sequence-only",
-        "platform-auto-detect",
-        "analyzer-prplos-known-anomalies",
-        "cli-analyze-prplos-known-anomalies"
+        {"case_id": "reporter-prplos-sequence-only", "kind": "existing"},
+        {"case_id": "platform-auto-detect", "kind": "existing"},
+        {
+          "case_id": "analyzer-prplos-known-anomalies",
+          "kind": "planned",
+          "notes": "planned analyzer playbook coverage for known-anomaly regression"
+        },
+        {
+          "case_id": "cli-analyze-prplos-known-anomalies",
+          "kind": "planned",
+          "notes": "planned CLI-oriented playbook coverage for known-anomaly regression"
+        }
       ],
       "notes": "Not committed in the repo; used for prplOS end-to-end verification and known-anomaly regression."
     },
@@ -34,9 +42,9 @@
       ],
       "availability": "in-tests",
       "used_by": [
-        "analyzer-profile-cycle-milestones",
-        "analyzer-pattern-rules",
-        "analyzer-timeout-and-sequence-rules"
+        {"case_id": "analyzer-profile-cycle-milestones", "kind": "existing"},
+        {"case_id": "analyzer-pattern-rules", "kind": "existing"},
+        {"case_id": "analyzer-timeout-and-sequence-rules", "kind": "existing"}
       ],
       "notes": "Synthetic timestamped lines for deterministic analyzer coverage."
     },
@@ -51,8 +59,8 @@
       ],
       "availability": "in-tests",
       "used_by": [
-        "agent-toolkit-log-and-baseline-access",
-        "agent-rca-reporting"
+        {"case_id": "agent-toolkit-log-and-baseline-access", "kind": "existing"},
+        {"case_id": "agent-rca-reporting", "kind": "existing"}
       ],
       "notes": "Synthetic structured payloads used for toolkit and RCA report tests."
     },
@@ -66,8 +74,8 @@
       ],
       "availability": "generated-at-runtime",
       "used_by": [
-        "agent-cli-rag-wiring",
-        "agent-rag-search-tool"
+        {"case_id": "agent-cli-rag-wiring", "kind": "existing"},
+        {"case_id": "agent-rag-search-tool", "kind": "existing"}
       ],
       "notes": "Temporary markdown knowledge docs used to exercise BM25 / RAG integration."
     }
