@@ -44,6 +44,24 @@ uv sync --extra rag
 uv sync --extra dev
 ```
 
+### Copilot logsensing skill
+
+Repo source of truth:
+
+- `docs/superpowers/skills/logsensing/SKILL.md`
+
+Install or refresh the local user copy:
+
+```bash
+bash scripts/sync_logsensing_skill.sh
+```
+
+The script installs the skill to:
+
+- `~/.agents/skills/logsensing/`
+
+After syncing, Copilot can load the `logsensing` skill from the local user skill directory while the repo copy remains the source of truth.
+
 ### 基本用法
 
 ```bash
