@@ -41,3 +41,27 @@ def test_sync_script_copies_skill_assets(tmp_path: Path) -> None:
 
     assert dest_skill.read_text(encoding="utf-8") == SRC_SKILL.read_text(encoding="utf-8")
     assert dest_ref.read_text(encoding="utf-8") == SRC_REF.read_text(encoding="utf-8")
+
+
+def test_sync_script_uses_default_destination(tmp_path: Path) -> None:
+    env = dict(os.environ)
+    env.pop("LOGSENSING_SKILL_DEST_ROOT", None)
+    env["HOME"] = str(tmp_path)
+
+    result = subprocess.run(
+        ["bash", str(SYNC_SCRIPT)],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+    dest_root = tmp_path / ".agents" / "skills"
+    dest_skill = dest_root / "logsensing" / "SKILL.md"
+    dest_ref = dest_root / "logsensing" / "references" / "cli-workflows.md"
+
+    assert dest_skill.read_text(encoding="utf-8") == SRC_SKILL.read_text(encoding="utf-8")
+    assert dest_ref.read_text(encoding="utf-8") == SRC_REF.read_text(encoding="utf-8")
