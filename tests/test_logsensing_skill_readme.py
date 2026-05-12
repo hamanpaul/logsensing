@@ -13,5 +13,7 @@ def test_readme_documents_logsensing_skill_install() -> None:
 
     assert "logsensing skill" in text.lower()
     assert "bash scripts/sync_logsensing_skill.sh" in text
+    assert "docs/superpowers/skills/logsensing/" in text
     assert "docs/superpowers/skills/logsensing/SKILL.md" in text
+    assert "docs/superpowers/skills/logsensing/references/cli-workflows.md" in text
     assert "~/.agents/skills/logsensing/" in text

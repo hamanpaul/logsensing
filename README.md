@@ -48,7 +48,9 @@ uv sync --extra dev
 
 Repo source of truth:
 
+- `docs/superpowers/skills/logsensing/`
 - `docs/superpowers/skills/logsensing/SKILL.md`
+- `docs/superpowers/skills/logsensing/references/cli-workflows.md`
 
 Install or refresh the local user copy:
 
